@@ -1,0 +1,50 @@
+player_id,player_name,position,league,club,fbref_id,tm_id,tm_slug,understat_id,sofascore_id,sofascore_slug,flashscore_id,flashscore_slug,manual_intl_caps,manual_intl_goals,manual_intl_ast,active_2526
+P001,El Mehdi Al Harrar,GK,Botola Pro,Raja Casablanca,,822538,el-mehdi-al-harrar,,1140885,mehdi-harrar,hYuTvQIs,harrar-mehdi,,,,unknown
+P002,El Mehdi Benabid,GK,Botola Pro,Wydad AC,b2e7f2e6,544414,el-mehdi-benabid,,970630,el-mehdi-benabid,hIlAyesq,benadid-el-mehdi,,,,unknown
+P003,Yassine Bounou,GK,Saudi Pro League,Al-Hilal SFC,f6798fc3,207834,yassine-bounou,,360938,bono,ne0lafKc,bono-bounou-yassine,90,0,0,yes
+P004,Munir El Kajoui,GK,Botola Pro,RS Berkane,fc8287db,97925,munir-el-kajoui,,141967,munir-mohamedi,zN1bmt8R,munir,,,,unknown
+P005,Ahmed Reda Tagnaouti,GK,Botola Pro,FAR Rabat,8b7a3c91,238997,ahmed-reda-tagnaouti,,359280,ahmed-reda-tagnaouti,SlSwWmOg,tagnaouti-ahmed-reda,48,2,0,yes
+P006,Yanis Benchaouch,GK,Ligue 1,AS Monaco,,975331,yanis-benchaouch,,1432574,yanis-benchaouch,x6eL7Oi1,benchaouch-marty-yanis,,,,unknown
+P007,Achraf Hakimi,DEF,Ligue 1,Paris Saint-Germain,e42d61c7,398073,achraf-hakimi,5197.0,814594,achraf-hakimi,MqFBkBsp,hakimi-achraf,90,6,26,yes
+P008,Noussair Mazraoui,DEF,Premier League,Manchester United,b74277a0,340456,noussair-mazraoui,10696.0,847030,noussair-mazraoui,2ajowGAq,mazraoui-noussair,45,2,5,yes
+P009,Nayef Aguerd,DEF,Ligue 1,Olympique de Marseille,288e1e13,361914,nayef-aguerd,6935.0,877102,nayef-aguerd,zsQh7xdD,aguerd-naif,59,5,2,yes
+P010,Chadi Riad,DEF,Premier League,Crystal Palace,b3b9b8b8,689637,chadi-riad,11167.0,1064218,chadi-riad,dGshLigA,riad-chadi,,,,unknown
+P011,Zakaria El Ouahdi,DEF,Jupiler Pro League,KRC Genk,a3d79d3c,820474,zakaria-el-ouahdi,,1134470,zakaria-el-ouahdi,OpbqnKI9,el-ouahdi-zakaria,9,0,0,yes
+P012,Issa Diop,DEF,Premier League,Fulham,a712ca2b,272622,issa-diop,3203.0,825719,issa-diop,Eyqbicqr,diop-issa,,,,unknown
+P013,Anass Salah-Eddine,DEF,Eredivisie,PSV Eindhoven,0d274394,485584,anass-salah-eddine,,961684,anass-salah-eddine,zZLg95q5,salah-eddine-anass,,,,unknown
+P014,Youssef Belammari,DEF,Egyptian Premier League,Al Ahly,,518804,youssef-belammari,,919484,youssef-belammari,APNK9rN7,belammari-youssef,,,,unknown
+P015,Redouane Halhal,DEF,Jupiler Pro League,KV Mechelen,e17c2cec,913660,redouane-halhal,,1143667,redouane-halhal,COmzUDS5,halhal-redouane,,,,unknown
+P016,Abdel Abqar,DEF,La Liga,Getafe CF,2bc7f211,559979,abdel-abqar,9297.0,1101232,abdel-abqar,Gp35on1c,abqar-abdelkebir,,,,unknown
+P017,Abdelhamid Ait Boudlal,DEF,Ligue 1,Stade Rennais FC,6cd15657,1134251,abdelhamid-ait-boudlal,13329.0,1597145,abdelhamid-ait-boudlal,EN8G47q1,ait-boudlal-abdelhamid,,,,unknown
+P018,Omar El Hilali,DEF,La Liga,RCD Espanyol,139560df,822331,omar-el-hilali,10875.0,1064026,omar-el-hilali,z9FaGS78,el-hilali-omar,,,,unknown
+P019,Mohamed Chibi,DEF,Egyptian Premier League,Pyramids FC,,197714,mohamed-chibi,,919642,chibi-mohamed,fo9gX6v9,chibi-mohamed,,,,yes
+P020,Marouane Louadni,DEF,Botola Pro,FAR Rabat,,518801,marouane-louadni,,1518450,marwan-louadni,84DLQudS,louadni-marwane,,,,unknown
+P021,Marwane Saadane,DEF,Saudi Pro League,Al-Fateh SC,,210009,marwane-saadane,,847714,marwane-saadane,EkQKJ570,saadane-marwane,,,,unknown
+P022,Ali Maamar,DEF,Jupiler Pro League,RSC Anderlecht,a5f5698d,920585,ali-maamar,,1440668,ali-maamar,KQA9jXwP,maamar-ali,,,,unknown
+P023,Sofyan Amrabat,MID,La Liga,Real Betis,5a2cb25d,287579,sofyan-amrabat,7927.0,359272,sofyan-amrabat,r5WUFzf3,amrabat-sofyan,67,1,5,yes
+P024,Azzedine Ounahi,MID,La Liga,Girona FC,83299cc0,593482,azzedine-ounahi,8328.0,991421,azzedine-ounahi,reDF5hxm,ounahi-azzedine,57,5,6,yes
+P025,Bilal El Khannouss,MID,Bundesliga,VfB Stuttgart,f7042636,654982,bilal-el-khannouss,13020.0,1126569,bilal-el-khannouss,Ui6gj3Cl,el-khannous-bilal,41,9,8,yes
+P026,Ismael Saibari,MID,Eredivisie,PSV Eindhoven,3ec9f005,702869,ismael-saibari,,1063767,ismael-saibari,WzSmqNMQ,saibari-ismael,34,6,5,yes
+P027,Neil El Aynaoui,MID,Serie A,AS Roma,17e1261b,901019,neil-el-aynaoui,12104.0,1128530,neil-el-aynaoui,f3mqZ2x6,el-aynaoui-neil,,,,yes
+P028,Ayyoub Bouaddi,MID,Ligue 1,LOSC Lille,8006228f,1097139,ayyoub-bouaddi,12162.0,1564180,bouaddi-ayyoub,dpoNasPg,bouaddi-ayyoub,,,,unknown
+P029,Samir El Mourabet,MID,Ligue 1,RC Strasbourg,1a03d055,1130514,samir-el-mourabet,12284.0,1605921,el-mourabet-samir,8ltXy6WP,el-mourabet-samir,,,,unknown
+P030,Mohamed Rabie Hrimat,MID,Botola Pro,FAR Rabat,,553100,mohamed-rabie-hrimat,,919489,mohamed-rabie-hrimat,xA4j9Fm8,hrimat-rabie-mohamed,,,,unknown
+P031,Imran Louza,MID,Championship,Watford FC,3a9b7f24,635336,imran-louza,,965943,imran-louza,ldlQs0e4,louza-imran,30,2,3,no
+P032,Oussama Targhalline,MID,Eredivisie,Feyenoord Rotterdam,abd56820,667965,oussama-targhalline,,1095731,oussama-targhalline,ULZGhzIc,targhalline-oussama,,,,yes
+P033,Bilal Nadir,MID,Ligue 1,Olympique de Marseille,226673c2,659520,bilal-nadir,9673.0,1129527,bilal-nadir,2TItKacj,nadir-bilal,,,,unknown
+P034,Sofiane Diop,FWD,Ligue 1,OGC Nice,19053e31,569389,sofiane-diop,6846.0,944164,sofiane-diop,8fA5XmQC,diop-sofiane,,,,unknown
+P035,Brahim Diaz,FWD,La Liga,Real Madrid,407feb71,314678,brahim-diaz,6421.0,835485,brahim-diaz,nm2Qvnyk,diaz-brahim,,,,yes
+P036,Soufiane Rahimi,FWD,UAE Pro League,Al Ain,1f6b9a73,598506,soufiane-rahimi,,953995,soufiane-rahimi,OYfFre1D,rahimi-soufiane,41,11,7,yes
+P037,Ayoub El Kaabi,FWD,Super League Greece,Olympiacos,5d2e8c46,521127,ayoub-el-kaabi,,919793,ayoub-el-kaabi,6RewslBm,el-kaabi-ayoub,67,23,4,yes
+P038,Abde Ezzalzouli,FWD,La Liga,Real Betis,bed68338,724520,abde-ezzalzouli,10095.0,1011375,abdessamad-ezzalzouli,YRiVcQ3T,ez-abde,,,,yes
+P039,Chemsdine Talbi,FWD,Premier League,Sunderland,47ce793b,743384,chemsdine-talbi,13717.0,1142675,chemsdine-talbi,Ayswm5ri,talbi-chemsdine,,,,unknown
+P040,Yassine Gessime,FWD,Ligue 1,RC Strasbourg,f5ccae19,1151929,gessime-yassine,14359.0,1638338,yassine-gessime,2o4NnnE9,yassine-gessime,,,,unknown
+P041,Ayoube Amaimouni-Echghouyab,FWD,Bundesliga,Eintracht Frankfurt,c5a07a5e,799993,ayoube-amaimouni-echghouyab,14331.0,1898148,ayoube-amaimouni-echghouyab,8S0XsmOl,amaimouni-echghouyab-ayoube,,,,unknown
+P042,Amine Sbai,FWD,Ligue 2,SCO Angers,bafbe06a,851220,amine-sbai,14131.0,1392829,amine-sbai,0ERxiKEk,sbai-mohamed-amine,,,,unknown
+P043,Amine Adli,FWD,Premier League,Bournemouth,dcfb17f4,532776,amine-adli,8211.0,991478,amine-adli,82ETy0Me,adli-amine,,,,unknown
+P044,Othmane Maamma,FWD,Championship,Watford FC,5bdb4a7b,1081219,othmane-maamma,,1515917,maamma-othmane,OEsM5Dqs,maamma-othmane,,,,unknown
+P045,Yassir Zabiri,FWD,Ligue 1,Stade Rennais FC,5b17d985,1153105,yassir-zabiri,14459.0,1606013,yassir-zabiri,CzE3mWTC,zabiri-yassir,,,,unknown
+P046,Ilias Akhomach,FWD,La Liga,Villarreal CF,b8bd60fe,709969,ilias-akhomach,10121.0,1089108,ilias-akhomach,ATAVnRY7,akhomach-ilias,,,,unknown
+P047,Tawfik Bentayeb,FWD,Ligue 2,ESTAC Troyes,9184e764,667995,tawfik-bentayeb,,1103080,tawfik-bentayeb,QqlDIsGM,bentayeb-tawfik,,,,unknown
+P048,Youssef En-Nesyri,FWD,Saudi Pro League,Al-Ittihad,a9c3f7b1,433049,youssef-en-nesyri,,846470,youssef-en-nesyri,UqBaaAqo,en-nesyri-youssef,79,24,5,yes
+P049,Rayane Bounida,FWD,Eredivisie,Ajax Amsterdam,40323b50,598491,rayane-bounida,,1403090,rayane-bounida,6BOZzCIl,bounida-rayane,,,,unknown

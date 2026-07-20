@@ -1,0 +1,53 @@
+# docker-compose.yml — Football DSS Local MinIO Simulator
+# Provides s3://football-bronze/ locally before connecting to the real MinIO instance.
+#
+# Usage:
+#   docker-compose up -d          # Start MinIO
+#   docker-compose down           # Stop
+#   docker-compose down -v        # Stop and delete all data
+#
+# Access:
+#   MinIO API:     http://localhost:9100  (used by Python client)
+#   MinIO Console: http://localhost:9101  (browser UI — admin/minioadmin)
+
+version: "3.9"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: football_minio2152
+    command: server /data --console-address ":9101"
+    environment:
+      MINIO_ROOT_USER:     minioadmin2152
+      MINIO_ROOT_PASSWORD: minioadmin2152
+    ports:
+      - "9100:9000"   # S3 API
+      - "9101:9101"   # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One-shot bucket creation — runs after MinIO is healthy
+  minio-init:
+    image: minio/mc:latest
+    container_name: football_minio_init2152
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin2152 minioadmin2152;
+      mc mb --ignore-existing local/football-bronze;
+      mc mb --ignore-existing local/football-silver;
+      mc mb --ignore-existing local/football-gold;
+      echo 'Buckets created: football-bronze, football-silver, football-gold';
+      "
+    restart: "no"
+
+volumes:
+  minio_data:
+    driver: local

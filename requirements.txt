@@ -1,0 +1,31 @@
+# Football DSS — Bronze/Silver/Gold Layer Dependencies
+
+# ── HTTP & scraping ───────────────────────────────────────────────────────────
+requests
+beautifulsoup4
+lxml
+
+# ── Browser automation ────────────────────────────────────────────────────────
+playwright
+selenium                    # ← مضافة (مطلوبة في sofascore_detail_loader.py)
+undetected_chromedriver
+
+# ── Environment variables ─────────────────────────────────────────────────────
+python-dotenv
+
+# ── Data processing ───────────────────────────────────────────────────────────
+pandas
+numpy
+pyarrow                     # ← مضافة (مطلوبة لـ df.to_parquet في run_silver.py)
+
+# ── MinIO storage ─────────────────────────────────────────────────────────────
+minio
+
+# ── Fuzzy matching ────────────────────────────────────────────────────────────
+rapidfuzz
+
+# ── StatsBomb open data ───────────────────────────────────────────────────────
+statsbombpy
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest
