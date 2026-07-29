@@ -460,6 +460,7 @@ def compute_final_score(df: pd.DataFrame) -> pd.DataFrame:
         "ChemistryScore":     COMPOSITE_WEIGHTS["ChemistryScore"],
         "PressureIndex":      COMPOSITE_WEIGHTS["PressureIndex"],
         "FlexibilityScore":   COMPOSITE_WEIGHTS["FlexibilityScore"],
+        "SentimentScore":     COMPOSITE_WEIGHTS["SentimentScore"],
     }
 
     df["DSSScore"] = df.apply(

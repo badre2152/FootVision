@@ -97,12 +97,29 @@ def load_latest_chemistry_pairs() -> list[dict]:
 
 
 # Columns that may or may not exist depending on which pipeline version
-# produced the file being loaded (older runs won't have Chemistry/Pressure/
-# Flexibility/DSSScore_pct — added 2026-07-14). Every page must check
-# `col in df.columns` before using these, never assume they're present.
+# produced the file being loaded (older runs won't have Chemistry/
+# Pressure/Flexibility/Sentiment — added across 2026-07-14 to 2026-07-22).
+# Every page must check `col in df.columns` before using these, never
+# assume they're present.
+#
+# FIX (2026-07-24, found via live dashboard screenshots): this list
+# previously (a) never included "SentimentScore" — a real bug, it was
+# simply forgotten when SentimentScore was added on 2026-07-22, so it
+# never appeared on the Player Analysis radar chart or the Final Squad
+# "strongest in..." justifications despite being a real, computed score —
+# and (b) incorrectly included "DSSScore_pct", which is NOT a sub-
+# component (it's the final display-scaled OUTPUT score, derived FROM
+# the components below, not one of them) — mixing it into the same
+# radar/list as PerformanceScore etc. was conceptually wrong, and could
+# even get picked as a player's "strongest trait" on the Final Squad
+# page, which is meaningless (DSSScore_pct isn't a "trait").
 NEW_COMPONENT_COLUMNS = [
-    "ChemistryScore", "PressureIndex", "FlexibilityScore", "DSSScore_pct",
+    "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
 ]
+
+# DSSScore_pct is deliberately NOT in NEW_COMPONENT_COLUMNS (see above) —
+# pages that want to display it do so explicitly (see app.py's
+# display_cols), never through available_component_columns().
 
 COMPONENT_COLUMNS_CORE = [
     "PerformanceScore", "FormScore", "MentalScore",

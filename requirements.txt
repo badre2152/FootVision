@@ -1,4 +1,4 @@
-# Football DSS — Bronze/Silver/Gold Layer Dependencies
+﻿# Football DSS — Bronze/Silver/Gold Layer Dependencies
 
 # ── HTTP & scraping ───────────────────────────────────────────────────────────
 requests
@@ -29,3 +29,14 @@ statsbombpy
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest
+
+# ── Dashboard (added 2026-07-14) ────────────────────────────────────────────────
+streamlit
+plotly
+praw
+google-api-python-client
+langdetect
+transformers
+torch
+sentencepiece
+tiktoken

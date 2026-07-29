@@ -67,3 +67,30 @@ def assert_min_coverage(
             "[%s] Coverage OK: %d/%d players (%.0f%%).",
             source, ok, len(records), pct * 100,
         )
+
+
+def mentions_player(text: str, player_name: str) -> bool:
+    """
+    Checks whether `text` actually discusses the player, not just came
+    from a search result that matched somewhere in a larger document.
+
+    Moved here 2026-07-24 to be shared between arctic_shift_collector.py
+    (where this fix was first found necessary — a live test showed a
+    Reddit megathread post matching "Achraf Hakimi" whose own comments
+    were entirely about Messi) and newsapi_collector.py (same class of
+    bug found independently: NewsAPI's search matches a player's name
+    anywhere in a full article, not necessarily in the title/description
+    snippet actually extracted — generic match-preview articles like
+    "How to watch France vs Morocco" were showing up in a specific
+    player's collected texts).
+
+    Checks for the full name OR just the surname (fans/headlines commonly
+    use surname only — "Hakimi was amazing" is common, "Achraf Hakimi was
+    amazing" less so in casual text).
+    """
+    if not text:
+        return False
+    text_lower = text.lower()
+    name_parts = player_name.lower().split()
+    surname = name_parts[-1] if name_parts else player_name.lower()
+    return player_name.lower() in text_lower or surname in text_lower

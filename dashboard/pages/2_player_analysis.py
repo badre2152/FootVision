@@ -75,7 +75,7 @@ with left:
         height=450,
         margin=dict(t=30, b=30),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 with right:
     st.subheader("Raw sub-scores")

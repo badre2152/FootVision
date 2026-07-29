@@ -229,6 +229,77 @@ def join_chemistry_pairs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def join_sentiment_texts(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reads the three raw-text Bronze sources for SentimentScore (Reddit,
+    YouTube, NewsAPI — see ingestion/loaders/reddit_collector.py,
+    youtube_collector.py, newsapi_collector.py) and combines them into a
+    single "sentiment_texts" list-column per player.
+
+    Deliberately does NOT run any NLP scoring here — Silver's job is raw
+    data assembly, consistent with join_chemistry_pairs() (raw pairwise
+    data, no scoring) and the rest of this file. Actual sentiment
+    scoring (loading transformer models, language routing) happens in
+    Gold — see analytics/scoring/sentiment_score.py — since it's compute-
+    heavy and belongs with the other compute_*_score() functions.
+
+    Coverage note: all three sources are new (added 2026-07-22) and
+    UNTESTED against live APIs (see each collector's module docstring
+    for what's verified vs not). Expect this to be the SPARSEST column
+    in the entire Silver table until real runs establish actual coverage
+    — do not assume high coverage the way ChemistryScore's 11/49 could be
+    predicted in advance (StatsBomb's match list was known upfront;
+    Reddit/YouTube/NewsAPI discussion volume per player is not knowable
+    without actually running the collectors).
+    """
+    text_columns = {
+        "reddit/":  "reddit_texts",
+        "youtube/": "youtube_texts",
+        "newsapi/": "newsapi_texts",
+    }
+
+    combined: dict[str, list[str]] = {}
+
+    for prefix, field_name in text_columns.items():
+        try:
+            records = read_latest_json(bucket="football-bronze", prefix=prefix)
+        except Exception as e:
+            logger.warning("Could not read %s Bronze source: %s", prefix, e)
+            records = None
+
+        if not records:
+            logger.info("No data found for sentiment source '%s' — skipping.", prefix)
+            continue
+
+        for record in records:
+            player_id = record.get("player_id")
+            texts = record.get(field_name)
+            if player_id is None or not texts:
+                continue
+            combined.setdefault(player_id, []).extend(texts)
+
+    if not combined:
+        logger.warning(
+            "sentiment_texts: NO data from any of Reddit/YouTube/NewsAPI — "
+            "SentimentScore will be entirely unscored (None) this run. "
+            "Check that the collectors ran and credentials are configured."
+        )
+        df["sentiment_texts"] = [[] for _ in range(len(df))]
+        df["sentiment_text_count"] = 0
+        return df
+
+    df["sentiment_texts"] = df["player_id"].map(combined).apply(lambda x: x if isinstance(x, list) else [])
+    df["sentiment_text_count"] = df["sentiment_texts"].apply(len)
+
+    covered = (df["sentiment_text_count"] > 0).sum()
+    logger.info(
+        "Sentiment texts joined: %d/%d players have at least 1 text "
+        "(total %d texts across Reddit+YouTube+NewsAPI combined)",
+        covered, len(df), sum(len(t) for t in combined.values()),
+    )
+    return df
+
+
 def rename_bronze_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Step 2 — RENAME: maps Bronze column names to Gold-expected Silver column names.
@@ -443,6 +514,9 @@ def build_silver(
 
     # Step 1b: JOIN pairwise StatsBomb chemistry (pair-level -> per-player scalar)
     df = join_chemistry_pairs(df)
+
+    # Step 1c: JOIN raw sentiment text (Reddit + YouTube + NewsAPI, no scoring yet)
+    df = join_sentiment_texts(df)
 
     # Step 2: RENAME
     df = rename_bronze_columns(df)

@@ -34,6 +34,7 @@ from analytics.scoring.performance_score import (
 from analytics.scoring.chemistry_score import compute_chemistry_score      # NEW 2026-07-14
 from analytics.scoring.pressure_index import compute_pressure_index        # NEW 2026-07-14
 from analytics.scoring.flexibility_score import compute_flexibility_score  # NEW 2026-07-14 (UNTESTED upstream — see module docstring)
+from analytics.scoring.sentiment_score import compute_sentiment_score      # NEW 2026-07-22 (UNTESTED end-to-end — see module docstring)
 from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary  # WIRED IN 2026-07-14 (was orphaned)
 
 logging.basicConfig(
@@ -56,6 +57,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--output-dir", type=str, default="gold",
         help="Directory for output files (default: gold/)",
+    )
+    p.add_argument(
+        "--use-clubelo", action="store_true",
+        help=(
+            "Replace the hardcoded LEAGUE_DIFFICULTY table (league_quality.py, "
+            "from AUDIT_AND_FIXES.md Fix 1) with real ClubElo ratings via "
+            "ingestion/loaders/clubelo_loader.py. OFF by default — this touches "
+            "GK ranking (previously audited), and the live ClubElo fetch has "
+            "not been tested from a network-restricted environment. The "
+            "parsing/matching/scoring LOGIC is unit-tested; the live API call "
+            "is not. Verify GK rankings after your first --use-clubelo run "
+            "before trusting it for a real selection decision."
+        ),
+    )
+    p.add_argument(
+        "--no-sentiment-nlp", action="store_true",
+        help=(
+            "Skip real NLP sentiment scoring (loading 4 transformer models is "
+            "slow/memory-heavy) — SentimentScore falls back to neutral (0.5) "
+            "for everyone. Useful for fast iteration on the rest of the "
+            "pipeline. NOT for a real squad-selection run."
+        ),
     )
     return p.parse_args()
 
@@ -239,6 +262,36 @@ def main() -> None:
     df = normalize_all(df)
 
     # ── Step 3: Compute sub-scores ────────────────────────────────────────────
+    if args.use_clubelo:
+        logger.info("Step 2.5/5 — Fetching real ClubElo ratings (--use-clubelo)...")
+        try:
+            from ingestion.loaders.clubelo_loader import load_clubelo_bronze, patch_league_quality
+            clubelo_result = load_clubelo_bronze(seed_df=df)
+            if clubelo_result.get("difficulty_by_league"):
+                patch_league_quality(clubelo_result, seed_df=df)
+                logger.info(
+                    "ClubElo: patched %d leagues with real Elo-based difficulty factors "
+                    "(replacing the hardcoded table for this run only — league_quality.py "
+                    "itself is unchanged on disk).",
+                    len(clubelo_result["difficulty_by_league"]),
+                )
+            else:
+                logger.warning(
+                    "ClubElo: fetch returned no usable data — falling back to the "
+                    "hardcoded LEAGUE_DIFFICULTY table (league_quality.py). This is "
+                    "the expected safe behavior on network failure, not a crash."
+                )
+        except Exception as e:
+            logger.warning(
+                "ClubElo fetch/patch failed (%s) — falling back to the hardcoded "
+                "LEAGUE_DIFFICULTY table. This --use-clubelo path has not been "
+                "tested end-to-end against the live API from every environment; "
+                "if this keeps failing, run "
+                "`python -c \"from ingestion.loaders.clubelo_loader import load_clubelo_bronze; "
+                "print(load_clubelo_bronze())\"` directly to see the raw error.",
+                e,
+            )
+
     logger.info("Step 3/5 — Computing sub-scores...")
     df = compute_performance_score(df)
     df = compute_form_score(df)          # CONFLICT-01 FIX: uses form_final + rating_final
@@ -248,6 +301,7 @@ def main() -> None:
     df = compute_chemistry_score(df)     # NEW 2026-07-14 — pairwise StatsBomb pass network
     df = compute_pressure_index(df)      # NEW 2026-07-14 — StatsBomb intl xG vs club xG delta
     df = compute_flexibility_score(df)   # NEW 2026-07-14 — UNTESTED upstream, see module docstring
+    df = compute_sentiment_score(df, use_nlp=not args.no_sentiment_nlp)  # NEW 2026-07-22
 
     # ── Step 4: Final composite DSS score ─────────────────────────────────────
     logger.info("Step 3.5/5 — Applying minutes filter (current season activity)...")
@@ -287,7 +341,7 @@ def main() -> None:
         "Rank", "player_name", "position", "club", "league",
         "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
         "MentalScore", "AvailabilityScore", "InternationalScore",
-        "ChemistryScore", "PressureIndex", "FlexibilityScore",
+        "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
     ]
     top_cols = [c for c in top_cols if c in top_df.columns]
     top_path = output_dir / f"top{args.top_n}_{run_date}.csv"

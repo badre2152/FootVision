@@ -109,6 +109,7 @@ def apply_minutes_filter(df: pd.DataFrame) -> pd.DataFrame:
         "ChemistryScore":     COMPOSITE_WEIGHTS["ChemistryScore"],
         "PressureIndex":      COMPOSITE_WEIGHTS["PressureIndex"],
         "FlexibilityScore":   COMPOSITE_WEIGHTS["FlexibilityScore"],
+        "SentimentScore":     COMPOSITE_WEIGHTS["SentimentScore"],
     }
 
     if "active_2526" not in df.columns:

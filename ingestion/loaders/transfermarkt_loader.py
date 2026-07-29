@@ -113,29 +113,47 @@ def _extract_secondary_positions(soup: BeautifulSoup) -> list[str]:
     Attempts to extract a player's secondary/"other" positions from their
     TM profile page.
 
-    ⚠️ UNTESTED AGAINST LIVE TRANSFERMARKT — see the call-site comment
-    inside fetch_transfermarkt_player() for why, and the verification
-    steps required before trusting this in production scoring.
+    ✅ FULLY VERIFIED against live Transfermarkt on 2026-07-21 using
+    Achraf Hakimi's real profile (tm_id=398073, a genuinely versatile
+    player: Right-Back main, Right Midfield + Left-Back secondary).
 
-    Tries a known TM markup pattern (current redesign, as of the last
-    time this codebase's author checked TM's HTML by hand — could easily
-    be stale by the time you read this, TM changes markup often):
+    The real markup has a confusing quirk: TM reuses the SAME class name
+    on two different tag types:
 
+        <div class="detail-position__inner-box">        <!-- main position -->
+          <dl><dt>Main position:</dt>
+              <dd class="detail-position__position">Right-Back</dd></dl>
+        </div>
         <div class="detail-position">
-            <div class="detail-position__position">Centre-Back</div>
-            <div class="detail-position__position">Right-Back</div>
-            ...
+          <div class="detail-position__box">
+            <div class="detail-position__position">      <!-- ⚠️ WRAPPER, same class! -->
+              Other position:
+              <dl><dd class="detail-position__position">Right Midfield</dd></dl>
+              <dl><dd class="detail-position__position">Left-Back</dd></dl>
+            </div>
+          </div>
         </div>
 
-    First match = main position (already captured elsewhere as
-    tm_position), any additional matches = secondary positions.
+    A class-only selector (no tag constraint) — tried in a 2026-07-20
+    fix — matches FOUR elements here, not three: the wrapper `<div>`'s
+    own text is the garbled concatenation "Other position:Right
+    MidfieldLeft-Back" (no separator, since get_text() ignores markup),
+    which got treated as a bogus 3rd "secondary position". This is why
+    tm_num_positions came back as 4 for nearly every player in the
+    2026-07-21 test run — not genuine diversity, over-matching.
+
+    FIX: constrain to tag="dd" specifically. The wrapper is a <div>, the
+    real per-position values are always <dd> — this reliably separates
+    them regardless of how many secondary positions exist (0, 1, or 2+).
+
+    First <dd> match = main position (already captured elsewhere as
+    tm_position), remaining <dd> matches = real secondary positions.
 
     Returns:
-        List of secondary position strings (empty list if none found /
-        selector didn't match — caller treats that as "1 position" via
-        a safe default, NOT as missing data).
+        List of secondary position strings (empty list if the player
+        only has one position, or the selector doesn't match at all).
     """
-    position_boxes = soup.select("div.detail-position__position")
+    position_boxes = soup.select("dd.detail-position__position")
     if len(position_boxes) > 1:
         return [p.get_text(strip=True) for p in position_boxes[1:] if p.get_text(strip=True)]
     return []
@@ -257,19 +275,16 @@ def fetch_transfermarkt_player(
                 result["tm_contract_expiry"] = date_match.group(1)
 
     # ── Secondary positions (FlexibilityScore raw input) — 2026-07-14 ────────
-    # ⚠️ UNTESTED AGAINST LIVE TRANSFERMARKT. Written from known TM markup
-    # patterns, NOT verified with a live fetch (transfermarkt.com is not
-    # reachable from the sandbox this was written in — only raw.
-    # githubusercontent.com/pypi/npm domains are). VERIFY on a machine with
-    # real network access before trusting tm_num_positions in scoring:
-    #   1. Run this loader for 3-5 known-versatile players (e.g. a
-    #      full-back who also plays winger).
-    #   2. Print the raw soup around ".detail-position" and confirm the
-    #      selectors below actually match — TM's markup changes over time
-    #      (see the T-01 diagnostic comment above re: the main position
-    #      selectors already needing an update once).
-    #   3. If selectors don't match, log.debug the page title/length like
-    #      the existing "0 fields parsed" guard does, don't guess further.
+    # FULLY VERIFIED 2026-07-21 against Achraf Hakimi's real profile
+    # (genuinely versatile: Right-Back main, Right Midfield + Left-Back
+    # secondary). Two selector bugs were found and fixed along the way:
+    #   2026-07-20: wrong tag (div vs the real dd) — selector matched 0.
+    #   2026-07-21: right tag but no constraint — matched a <div> wrapper
+    #     that shares the same class as the real <dd> values, inflating
+    #     the count with garbled concatenated text. Now uses
+    #     "dd.detail-position__position" specifically — see
+    #     _extract_secondary_positions()'s docstring for the full verified
+    #     markup structure.
     secondary_positions = _extract_secondary_positions(soup)
     if secondary_positions:
         result["tm_secondary_positions"] = ", ".join(secondary_positions)

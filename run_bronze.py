@@ -105,6 +105,17 @@ Examples:
     p.add_argument("--skip-intl",           action="store_true", help="Skip FBref international stats loader")
     p.add_argument("--skip-flashscore",     action="store_true", help="Skip FlashScore ratings loader")
     p.add_argument("--skip-club-stats-csv", action="store_true", help="Skip local CSV club stats loader (Big-5 leagues, Cloudflare-bypass workaround)")
+    # ── Sentiment sources (added 2026-07-22) — OPT-IN, not opt-out ───────────
+    # Unlike every other source above, these default to OFF (must pass
+    # --enable-*) rather than ON-unless-skipped. Reason: all three need
+    # credentials configured in .env first (REDDIT_CLIENT_ID/SECRET,
+    # YOUTUBE_API_KEY, NEWSAPI_KEY) — running them by default on a fresh
+    # checkout would just log warnings and produce no data, and YouTube's
+    # quota cost (100 units/search) is real money-adjacent even on the
+    # free tier if run repeatedly without realizing it's happening.
+    p.add_argument("--enable-reddit",  action="store_true", help="Enable Reddit collector (SentimentScore) via Arctic Shift — NO credentials needed (switched from PRAW 2026-07-23, see arctic_shift_collector.py)")
+    p.add_argument("--enable-youtube", action="store_true", help="Enable YouTube collector (SentimentScore) — needs YOUTUBE_API_KEY in .env, costs ~4900/10000 daily quota for 49 players")
+    p.add_argument("--enable-newsapi", action="store_true", help="Enable NewsAPI collector (SentimentScore) — needs NEWSAPI_KEY in .env, free tier is 100 requests/day")
     # ── Shortcut: run FlashScore only ─────────────────────────────────────────
     p.add_argument(
         "--only-flashscore",
@@ -221,6 +232,22 @@ def main() -> None:
         _run("flashscore",    load_flashscore_bronze,    seed_df, run_date)
     if not args.skip_club_stats_csv:
         _run("club_stats_csv", load_club_stats_csv_bronze, seed_df, run_date)
+
+    # ── Sentiment sources (opt-in, added 2026-07-22) ─────────────────────────
+    if args.enable_reddit:
+        # SWITCHED 2026-07-23: reddit_collector.py (PRAW/OAuth) -> arctic_shift_collector.py
+        # (no auth needed) — Reddit's official API closed self-service app
+        # registration in 2026 (Responsible Builder Policy, manual approval,
+        # small projects mostly rejected). Same output contract (bronze/reddit/,
+        # "reddit_texts" field), so nothing downstream needed to change.
+        from ingestion.loaders.arctic_shift_collector import load_arctic_shift_bronze
+        _run("reddit (via Arctic Shift)", load_arctic_shift_bronze, seed_df, run_date)
+    if args.enable_youtube:
+        from ingestion.loaders.youtube_collector import load_youtube_bronze
+        _run("youtube", load_youtube_bronze, seed_df, run_date)
+    if args.enable_newsapi:
+        from ingestion.loaders.newsapi_collector import load_newsapi_bronze
+        _run("newsapi", load_newsapi_bronze, seed_df, run_date)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     logger.info("=" * 60)

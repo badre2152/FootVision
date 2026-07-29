@@ -53,7 +53,7 @@ def render_sidebar() -> None:
             key="sidebar_search_box",
         )
 
-        if st.button("Reset filters", use_container_width=True):
+        if st.button("Reset filters", width='stretch'):
             st.session_state["filter_positions"] = list(POSITIONS)
             st.session_state["filter_search"] = ""
             st.rerun()

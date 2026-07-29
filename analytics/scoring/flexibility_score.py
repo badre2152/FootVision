@@ -5,28 +5,32 @@
 # session (see AUDIT session notes) — no loader anywhere captured
 # secondary/multi-position data.
 #
-# ⚠️ IMPORTANT — TESTING STATUS ⚠️
-# The raw input (tm_num_positions) comes from a NEW extraction added to
-# ingestion/loaders/transfermarkt_loader.py's _extract_secondary_positions()
-# in this same session. That extraction is WRITTEN but UNTESTED against a
-# live Transfermarkt page — the sandbox this was written in cannot reach
-# transfermarkt.com (only github/pypi/npm domains are whitelisted). This
-# module itself (the scoring math) IS tested (see test call below) — what's
-# NOT verified is whether the upstream selector in transfermarkt_loader.py
-# actually matches TM's current markup.
+# ⚠️ TESTING STATUS (updated 2026-07-20) ⚠️
+# The raw input (tm_num_positions) comes from
+# ingestion/loaders/transfermarkt_loader.py's _extract_secondary_positions().
+# A tag-name bug (div vs the real <dd>) was found and fixed on 2026-07-20
+# via live diagnostic against 5 real Transfermarkt profiles — this is why
+# every run before that date showed FlexibilityScore flat at 0 for all 49
+# players. The selector SYNTAX is now confirmed correct.
 #
-# BEFORE TRUSTING THIS IN A REAL RUN:
-#   1. Run run_bronze.py --skip-everything-except-transfermarkt on a
-#      machine with real network access.
-#   2. Check the Silver output for a few KNOWN-versatile players (e.g. a
-#      full-back who also plays winger, or a converted midfielder) —
-#      confirm tm_num_positions > 1 for at least some of them.
-#   3. If ALL 49 players show tm_num_positions == 1, the selector in
-#      _extract_secondary_positions() is almost certainly stale (TM
-#      changes markup periodically) — this module will silently produce a
-#      flat, uninformative FlexibilityScore (everyone gets the same
-#      normalized floor value) rather than crashing. That is the specific
-#      failure mode to check for.
+# STILL UNVERIFIED: whether the multi-position case (more than one <dd
+# class="detail-position__position">) actually renders for genuinely
+# versatile players — all 5 verification profiles were goalkeepers, who
+# realistically only have one position. This proves the fix didn't break
+# anything and matches the correct single-position case, but doesn't yet
+# prove tm_num_positions > 1 works for a real multi-position player.
+#
+# BEFORE FULLY TRUSTING THIS IN A REAL SELECTION DECISION:
+#   1. Run the Transfermarkt loader for a KNOWN-versatile outfield player
+#      (e.g. a full-back who also plays winger, or a converted
+#      midfielder).
+#   2. Confirm tm_num_positions > 1 for at least one such player.
+#   3. If it's still 1 for a player you know plays multiple positions,
+#      TM may not always populate the "Other position" field, or the
+#      widget may only appear for players with a sufficiently long
+#      appearance history at the secondary position — investigate that
+#      specific profile's HTML directly rather than assuming the
+#      selector is broken again.
 #
 # Definition: FlexibilityScore = normalized(tm_num_positions), where
 # tm_num_positions = 1 + count of secondary positions listed on the

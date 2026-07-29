@@ -144,6 +144,13 @@ NORMALIZATION_BOUNDS: dict[str, tuple[float, float]] = {
     # 1 = single position (neutral default), 4 = very versatile (rare).
     "tm_num_positions":   (1.0, 4.0),
 
+    # ── SentimentScore — Reddit + YouTube + NewsAPI, NLP-scored ──────────────
+    # NOT normalized via normalize_column() — sentiment_score.py's aggregation
+    # (analytics/nlp/sentiment_analyzer.py) already produces a [0,1] value
+    # directly (0=negative, 0.5=neutral, 1=positive), so no raw-value bounds
+    # are needed here. Listed for documentation completeness only.
+    # "sentiment_raw": already in [0, 1] by construction — no bounds needed.
+
     # ── Injury / Availability (ADR-014) ───────────────────────────────────────
     "inj_count_2y":       (0.0, 10.0),
     "inj_days_missed_2y": (0.0, 365.0),  # FIX B-11: was 180.0 — ACL cases clipped
@@ -187,27 +194,31 @@ INJURY_AVAILABILITY_THRESHOLDS: dict[str, int] = {
 # These are the top-level DSS score weights fed into the final player ranking.
 
 COMPOSITE_WEIGHTS: dict[str, float] = {
-    # REBALANCED 2026-07-14 (second pass) to add FlexibilityScore.
-    # FlexibilityScore weight (0.07) matches PROJECT.md's original 8-part
-    # formula. The other 7 weights are the previous 7-component set (which
-    # summed to 1.00) scaled down by 0.93 (=1.00-0.07) to make room, again
-    # preserving relative ranking rather than re-deriving from data.
+    # REBALANCED 2026-07-22 (third and FINAL pass) to add SentimentScore —
+    # completes all 9 components from PROJECT.md's original vision minus
+    # nothing (FlexibilityScore was the last gap before this).
+    # SentimentScore weight (0.05) matches PROJECT.md's original 8-part
+    # formula exactly (the smallest weight in the whole formula — see
+    # PROJECT.md's own "priorities if delayed" table, which explicitly
+    # marks Sentiment as "🟡 bonus appreciated", not core). The other 8
+    # weights are the previous 8-component set (summed to 1.00) scaled
+    # down by 0.95 (=1.00-0.05) to make room, again preserving relative
+    # ranking rather than re-deriving from data.
     #
-    # ⚠️ FlexibilityScore's raw input (tm_num_positions) is UNTESTED against
-    # live Transfermarkt (see analytics/scoring/flexibility_score.py). If
-    # the selector turns out to be stale, this component will be a flat,
-    # uninformative column until fixed — it won't crash, but it also won't
-    # add real signal. Check the module's warning log after the first real
-    # run before trusting it.
-    "PerformanceScore":  0.2697,  # was 0.29
-    "TacticalFitScore":  0.1953,  # was 0.21
-    "FormScore":         0.1581,  # was 0.17
-    "MentalScore":       0.0744,  # was 0.08
-    "AvailabilityScore": 0.0837,  # was 0.09
-    "ChemistryScore":    0.0744,  # was 0.08
-    "PressureIndex":     0.0744,  # was 0.08
-    "FlexibilityScore":  0.07,    # NEW
-    # Sum = 1.00. SentimentScore still deferred — no real data source
-    # exists yet (zero Twitter/Reddit/NLP infra in this codebase as of
-    # 2026-07-14). Do NOT add a placeholder weight for it.
+    # ⚠️ SentimentScore's entire pipeline (3 new data collectors + 4 NLP
+    # models) is UNTESTED end-to-end against live services (see
+    # analytics/scoring/sentiment_score.py and each collector's module
+    # docstring). Expect this to be the sparsest, least-proven component
+    # in the formula until real runs establish actual coverage.
+    "PerformanceScore":  0.2562,  # was 0.2697
+    "TacticalFitScore":  0.1855,  # was 0.1953
+    "FormScore":         0.1502,  # was 0.1581
+    "MentalScore":       0.0707,  # was 0.0744
+    "AvailabilityScore": 0.0795,  # was 0.0837
+    "ChemistryScore":    0.0707,  # was 0.0744
+    "PressureIndex":     0.0707,  # was 0.0744
+    "FlexibilityScore":  0.0665,  # was 0.07
+    "SentimentScore":    0.05,    # NEW
+    # Sum = 1.00. This completes PROJECT.md's original 9-part vision
+    # (8 weighted sub-scores + FormScore, all present and accounted for).
 }  # sum = 1.0 ✓

@@ -62,7 +62,7 @@ fig = px.imshow(
     aspect="auto",
 )
 fig.update_layout(height=600, margin=dict(t=30, b=30))
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 st.divider()
 
@@ -75,4 +75,4 @@ top_pairs_display = top_pairs[["player_a_name", "player_b_name", "chem_per90", "
         "passes_combined": "Total passes",
     }
 )
-st.dataframe(top_pairs_display, use_container_width=True, hide_index=True)
+st.dataframe(top_pairs_display, width='stretch', hide_index=True)

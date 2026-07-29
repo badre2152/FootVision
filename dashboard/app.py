@@ -78,7 +78,7 @@ with left:
                  color="Position",
                  color_discrete_map={"GK": "#e63946", "DEF": "#457b9d", "MID": "#2a9d8f", "FWD": "#f4a261"})
     fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=280)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     expected_caps = {"GK": 3, "DEF": 9, "MID": 9, "FWD": 5}
     mismatches = [
@@ -124,7 +124,7 @@ display_cols = [c for c in [
     "Rank", "player_name", "position", "club", "league",
     "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
     "MentalScore", "AvailabilityScore", "InternationalScore",
-    "ChemistryScore", "PressureIndex", "FlexibilityScore",
+    "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
 ] if c in top26_filtered.columns]
 
 if top26_filtered.empty:
@@ -132,11 +132,11 @@ if top26_filtered.empty:
 else:
     st.dataframe(
         top26_filtered[display_cols].style.background_gradient(subset=["DSSScore"], cmap="RdYlGn"),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
-missing_new_cols = [c for c in ["ChemistryScore", "PressureIndex", "FlexibilityScore", "DSSScore_pct"] if c not in top26.columns]
+missing_new_cols = [c for c in ["ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore", "DSSScore_pct"] if c not in top26.columns]
 if missing_new_cols:
     st.caption(
         f"ℹ️ This run predates the 2026-07-14 session — {', '.join(missing_new_cols)} "

@@ -19,7 +19,7 @@ import io
 import logging
 import time
 import urllib.request
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -93,10 +93,24 @@ def _match_club(club_name: str, elo_rows: list[dict]) -> dict | None:
             return row
 
     # محاولة 3: كلمة أساسية
+    # ⚠️ RISK (flagged 2026-07-21, not fixable without live ClubElo data to
+    # verify against): clubs sharing a >3-char keyword can collide here —
+    # e.g. "Real Betis" and "Real Sociedad" (both in OUR_CLUBS) both
+    # contain "real". This only fires when attempts 1+2 (exact/substring)
+    # both fail, but if it does fire for an ambiguous name, it silently
+    # returns the FIRST matching row, which may be the wrong club. Logged
+    # as a WARNING (not just debug) specifically so this is auditable —
+    # check logs for "keyword fallback" matches before trusting the
+    # resulting league difficulty factors.
     keywords = [w for w in name_lower.split() if len(w) > 3]
     for kw in keywords:
         for row in elo_rows:
             if kw in row.get("Club", "").lower():
+                logger.warning(
+                    "ClubElo: '%s' matched via risky keyword fallback ('%s' -> '%s') "
+                    "— verify this is the correct club, ambiguous names can collide here.",
+                    club_name, kw, row.get("Club"),
+                )
                 return row
 
     return None
@@ -177,8 +191,13 @@ def load_clubelo_bronze(
 
     elo_rows = _fetch_clubelo_csv(run_date)
     if not elo_rows:
-        # fallback: اليوم الأمس
-        yesterday = date.today().replace(day=date.today().day - 1).isoformat()
+        # FIX (found 2026-07-21, verifiable without network access — pure
+        # date-arithmetic bug): the old code was
+        #   date.today().replace(day=date.today().day - 1)
+        # which raises ValueError("day is out of range for month") whenever
+        # today is the 1st of any month (day=0 is invalid). timedelta
+        # handles month/year boundaries correctly in all cases.
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
         logger.warning("Retrying with yesterday: %s", yesterday)
         elo_rows = _fetch_clubelo_csv(yesterday)
 
@@ -216,14 +235,28 @@ def load_clubelo_bronze(
     return result
 
 
-def patch_league_quality(clubelo_result: dict) -> None:
+def patch_league_quality(clubelo_result: dict, seed_df: "pd.DataFrame | None" = None) -> None:
     """
     يُحدّث LEAGUE_DIFFICULTY في league_quality.py بالأرقام الجديدة.
     يُستدعى بعد load_clubelo_bronze() مباشرة.
 
     الاستخدام:
         result = load_clubelo_bronze(seed_df)
-        patch_league_quality(result)
+        patch_league_quality(result, seed_df)
+
+    CONFIRMED VIA LIVE DIAGNOSTIC (2026-07-22, diagnose_clubelo_coverage.py):
+    ClubElo's daily feed has ZERO coverage of Botola Pro, Saudi Pro League,
+    UAE Pro League, Egyptian Premier League, and Super League Greece —
+    not a naming/matching issue, these leagues simply aren't in ClubElo's
+    tracked competitions at all. This means the ORIGINAL motivating problem
+    (AUDIT_AND_FIXES.md Fix 1 — Botola Pro GK bias) is NOT solved by
+    --use-clubelo: Botola Pro silently keeps its old hardcoded 0.72
+    estimate every time, because ClubElo has nothing to replace it with.
+
+    `seed_df` (optional) lets this function tell you EXACTLY which leagues
+    in YOUR candidate pool were left on the manual estimate, instead of
+    you having to notice a suspiciously-unchanged DSSScore and go
+    detective-work it out (as happened on 2026-07-22, before this fix).
     """
     from analytics.scoring.league_quality import LEAGUE_DIFFICULTY
 
@@ -242,3 +275,16 @@ def patch_league_quality(clubelo_result: dict) -> None:
         "patch_league_quality: %d leagues updated from ClubElo",
         updated,
     )
+
+    if seed_df is not None and "league" in seed_df.columns:
+        candidate_leagues = set(seed_df["league"].dropna().unique())
+        not_updated = candidate_leagues - set(difficulty.keys())
+        if not_updated:
+            logger.warning(
+                "ClubElo did NOT cover %d league(s) present in your 49-candidate "
+                "pool — these are STILL using the manual hardcoded estimate in "
+                "league_quality.py, not real Elo data: %s. This is expected for "
+                "non-European leagues (ClubElo's daily feed doesn't track them) "
+                "— see patch_league_quality()'s docstring.",
+                len(not_updated), sorted(not_updated),
+            )
