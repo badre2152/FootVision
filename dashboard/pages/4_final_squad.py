@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_top26, available_component_columns
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from analytics.ml.player_clustering import ARCHETYPE_EMOJI  # NEW 2026-07-29
 
 st.set_page_config(page_title="Football Atlas — Final Squad", page_icon="🏆", layout="wide")
 render_sidebar()
@@ -29,6 +30,12 @@ if top26.empty:
     st.stop()
 
 component_cols = available_component_columns(top26)
+
+if "PlayerDNA" in top26.columns and (top26["PlayerDNA"] != "N/A").any():
+    st.caption(
+        "🏷️ Player DNA badges are a descriptive play-style tag from K-Means "
+        "clustering — NOT a factor in DSSScore or squad selection."
+    )
 
 
 def _justification(row) -> str:
@@ -58,6 +65,10 @@ for pos in POSITION_ORDER:
         with cols[i % len(cols)]:
             st.markdown(f"**#{int(row['Rank'])} {row['player_name']}**")
             st.caption(row.get("club", ""))
+            dna = row.get("PlayerDNA")
+            if dna and dna != "N/A":
+                emoji = ARCHETYPE_EMOJI.get(dna, "🏷️")
+                st.markdown(f"{emoji} *{dna}*")
             st.progress(min(max(row["DSSScore"], 0.0), 1.0), text=f"DSS {row['DSSScore']:.3f}")
             st.caption(_justification(row))
     st.divider()

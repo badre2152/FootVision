@@ -4,9 +4,14 @@
 # transfermarkt_injury, and fbref_intl loaders (deferred from v17, done in v18).
 
 import logging
+import re
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Unicode ranges covering Arabic, Arabic Supplement, and Arabic Extended-A —
+# enough to catch Modern Standard Arabic and Darija written in Arabic script.
+_ARABIC_CHAR_RE = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]')
 
 
 def validate_seed_columns(seed_df: pd.DataFrame, required: list[str], source: str) -> None:
@@ -87,9 +92,47 @@ def mentions_player(text: str, player_name: str) -> bool:
     Checks for the full name OR just the surname (fans/headlines commonly
     use surname only — "Hakimi was amazing" is common, "Achraf Hakimi was
     amazing" less so in casual text).
+
+    FIX 2026-07-27 (this exact fix was previously written and verified in
+    an earlier session, but did not survive into this archive — see
+    handoff notes; reapplied 2026-07-29 with one refinement, documented
+    below):
+    The original version below only ever checked for a Latin-script
+    substring match (`player_name` / `surname`). Arabic-script text can
+    NEVER contain a Latin string like "Belammari", so this silently
+    discarded 100% of Arabic/Darija mentions of every one of the 49
+    players — not a coverage gap, a total exclusion. Prior sentiment
+    analysis showed Darija text skews more critical/negative than
+    English/French coverage, so this bug was making SentimentScore's
+    positive bias WORSE, not better, and doing so completely invisibly
+    (no error, no warning — `mentions_player` just always returned False
+    for Arabic text and the caller silently dropped it as "irrelevant").
+
+    Building a reliable Latin→Arabic transliteration map for 49 players
+    (and their common Darija nicknames) is not worth the maintenance
+    burden and would itself be a fresh source of silent misses. Instead:
+    if the text is *predominantly* Arabic-script, treat it as relevant
+    without attempting the Latin-name check — the caller already queried
+    a source (Reddit/YouTube/NewsAPI) targeted at this specific player,
+    so `mentions_player` for Arabic text here is a coarser but honest
+    "don't silently discard on a check we can't actually perform"
+    decision rather than a false "confirmed match".
+
+    Refinement over the original fix: relevance is decided by the
+    *majority* script of the text (Arabic chars > 50% of alphabetic
+    chars), not merely "contains any Arabic character at all" — an
+    English-language article that happens to quote one Arabic word/name
+    should still go through the normal Latin-name check, not get a free
+    pass just because of that one incidental character.
     """
     if not text:
         return False
+
+    arabic_chars = len(_ARABIC_CHAR_RE.findall(text))
+    alphabetic_chars = sum(1 for ch in text if ch.isalpha())
+    if alphabetic_chars > 0 and (arabic_chars / alphabetic_chars) > 0.5:
+        return True
+
     text_lower = text.lower()
     name_parts = player_name.lower().split()
     surname = name_parts[-1] if name_parts else player_name.lower()

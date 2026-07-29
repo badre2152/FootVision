@@ -398,6 +398,32 @@ def impute_by_position(df: pd.DataFrame) -> pd.DataFrame:
                     col, group_label, null_before, null_after, null_before - null_after,
                 )
 
+    # ── FIX (2026-07-29): علم data provenance لـ MentalScore ──────────────────
+    # المشكلة المكتشفة: compute_mental_score() فـ Gold كانت تصنّف mental_source
+    # بناءً على "هل العمود non-null؟" — لكن بعد impute_by_position()، كل الأعمدة
+    # non-null (سواء كانت حقيقية أو مُعوَّضة بـmedian المركز). النتيجة: لوغ حقيقي
+    # (27 يوليوز) أظهر "sources: {'statsbomb': 49}" رغم أن التغطية الحقيقية
+    # لـStatsBomb كانت تاريخياً 11/49 فقط — كذب توثيقي كامل، وجعل منطق SoFIFA
+    # fallback (اللي بُني خصيصاً لهذا) كود ميت فعلياً لأنه ما يتفعّلش أبداً.
+    #
+    # الحل: نسجّل sb_mental_data_real=True/False *قبل* الimputation، بنفس نمط
+    # ga_imputed_flag الموجود تحت لهذا الملف. Gold تقدر تستعملها لتصنيف
+    # mental_source بصدق (statsbomb الحقيقي vs sofifa vs imputed).
+    _MENTAL_COLS = ["sb_pressures_per90", "sb_passes_per90", "sb_carries_per90"]
+    _present_mental_cols = [c for c in _MENTAL_COLS if c in df.columns]
+    if _present_mental_cols:
+        # حقيقي = عنده على الأقل قيمة واحدة غير-فارغة قبل أي imputation
+        df["sb_mental_data_real"] = df[_present_mental_cols].notna().any(axis=1)
+        real_count = int(df["sb_mental_data_real"].sum())
+        logger.info(
+            "sb_mental_data_real flag set: %d/%d players have genuine StatsBomb "
+            "mental data BEFORE imputation (rest will be position-median filled "
+            "and must NOT be reported as 'statsbomb' source downstream).",
+            real_count, len(df),
+        )
+    else:
+        df["sb_mental_data_real"] = False
+
     _impute(outfield_mask, IMPUTE_OUTFIELD_COLS, "outfield")
 
     # BUG-02 FIX: قبل imputation الـ GK — سجّل أي حارس GA_per90 فيه NaN

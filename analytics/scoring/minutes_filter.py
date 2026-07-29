@@ -126,12 +126,30 @@ def apply_minutes_filter(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # إعادة حساب DSSScore — بنفس الدالة والمفاتيح اللي كيستعملها compute_final_score
-    df["DSSScore"] = df.apply(
+    df["DSSScore_pre_gate"] = df.apply(
         lambda r: compute_weighted_subscore(r, composite_weights, suffix=""),
         axis=1,
     ).round(4)
 
-    # إعادة الترتيب
+    # ── FIX (2026-07-29): البوابة الحقيقية على DSSScore، ماشي غير AvailabilityScore ──
+    # المشكلة المكتشفة: العقوبة كانت تُطبَّق فقط على AvailabilityScore (وزنه 7.95%
+    # فقط فـ الصيغة). حتى أقصى عقوبة (SEED_INACTIVE ×0.20) ما تقدر تخفّض DSSScore
+    # بأكثر من ~0.064 نقطة — أقل بكثير من الفارق بين لاعب ممتاز وآخر متوسط فـ باقي
+    # الـ8 مكونات. النتيجة الفعلية المُلاحَظة: Imran Louza (SEED_INACTIVE) تصدّر
+    # الترتيب #1 رغم العلم الصريح بعدم نشاطه — بالضبط السيناريو اللي هذا الملف
+    # بُني أصلاً باش يمنعه (شوف التعليق فـ رأس الملف)، لكن التطبيق الفعلي فشل
+    # يحقق الهدف المكتوب.
+    #
+    # الحل: نطبّق نفس معامل العقوبة (PENALTIES) كمضاعف مباشر على DSSScore الكامل،
+    # فوق تخفيض AvailabilityScore الأصلي (اللي كيبقى للشفافية الداخلية/التفكيك).
+    # هكذا لاعب SEED_INACTIVE ما يقدرش يتصدّر الترتيب إلا لو كان متفوق بشكل
+    # استثنائي جداً فـ كل شيء آخر (سيناريو نادر ويستاهل مراجعة يدوية أصلاً).
+    df["DSSScore"] = df.apply(
+        lambda r: round(r["DSSScore_pre_gate"] * PENALTIES[r["minutes_flag"]], 4),
+        axis=1,
+    )
+
+    # إعادة الترتيب على القيمة المُبوَّبة (الحقيقية)
     df["Rank"] = df["DSSScore"].rank(ascending=False, method="min").astype(int)
 
     # ── تقارير ──────────────────────────────────────────────────────────
@@ -142,8 +160,23 @@ def apply_minutes_filter(df: pd.DataFrame) -> pd.DataFrame:
             names = ", ".join(affected["player_name"].tolist())
             penalty = PENALTIES[flag_name]
             logger.warning(
-                "minutes_filter [%s] (Avail×%.2f): %s",
-                flag_name, penalty, names,
+                "minutes_filter [%s] (Avail×%.2f, DSSScore×%.2f): %s",
+                flag_name, penalty, penalty, names,
+            )
+
+    # تحذير خاص: أي لاعب SEED_INACTIVE/INACTIVE لازال ضمن أعلى 26 رتبة بعد
+    # البوابة — هذا يعني تفوقه فـ باقي المكونات كبير جداً، ويستاهل تحقق يدوي
+    # (مثلاً: هل فعلاً غير نشط، ولا الـseed قديم/خاطئ؟).
+    risky_flags = {"SEED_INACTIVE", "INACTIVE"}
+    still_top = df[df["minutes_flag"].isin(risky_flags) & (df["Rank"] <= 26)]
+    if not still_top.empty:
+        for _, r in still_top.iterrows():
+            logger.warning(
+                "⚠️ minutes_filter GATE ALERT: %s is [%s] but still Rank #%d "
+                "(DSSScore %.4f → %.4f after gate) — VERIFY MANUALLY before "
+                "including in the final squad recommendation.",
+                r["player_name"], r["minutes_flag"], r["Rank"],
+                r["DSSScore_pre_gate"], r["DSSScore"],
             )
 
     active_count = (df["minutes_flag"] == "ACTIVE").sum()

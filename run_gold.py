@@ -7,9 +7,17 @@
 #   2. gold/top26_YYYYMMDD.csv           — top 26 recommended players
 #   3. gold/squad_summary_YYYYMMDD.json  — position breakdown + flagged risks
 #
+#
+# NEW 2026-07-29: also runs Player DNA (K-Means) clustering and adds a
+# "PlayerDNA" column to all three outputs above — see
+# analytics/ml/player_clustering.py for what it is and, importantly, what
+# it deliberately is NOT (a squad-selection input).
+#
 # Run AFTER run_bronze.py:
 #   python run_gold.py
 #   python run_gold.py --top-n 26
+#   python run_gold.py --no-player-dna       # skip clustering (fast iteration)
+#   python run_gold.py --player-dna-k 4      # force k=4 instead of auto-select
 
 import argparse
 import json
@@ -36,6 +44,7 @@ from analytics.scoring.pressure_index import compute_pressure_index        # NEW
 from analytics.scoring.flexibility_score import compute_flexibility_score  # NEW 2026-07-14 (UNTESTED upstream — see module docstring)
 from analytics.scoring.sentiment_score import compute_sentiment_score      # NEW 2026-07-22 (UNTESTED end-to-end — see module docstring)
 from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary  # WIRED IN 2026-07-14 (was orphaned)
+from analytics.ml.player_clustering import cluster_players  # NEW 2026-07-29 — ML layer, see module docstring
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,6 +88,22 @@ def parse_args() -> argparse.Namespace:
             "for everyone. Useful for fast iteration on the rest of the "
             "pipeline. NOT for a real squad-selection run."
         ),
+    )
+    p.add_argument(
+        "--no-player-dna", action="store_true",
+        help=(
+            "Skip Player DNA (K-Means) clustering — PlayerDNA falls back to "
+            "'N/A' for everyone. Clustering itself is cheap (no network, no "
+            "heavy models), this flag exists mainly so a clustering failure "
+            "never blocks the rest of a real squad-selection run — see "
+            "analytics/ml/player_clustering.py docstring for why this "
+            "component is descriptive/exploratory, not a selection input."
+        ),
+    )
+    p.add_argument(
+        "--player-dna-k", type=int, default=None,
+        help="Force this many Player DNA clusters instead of auto-selecting "
+             "via silhouette score over k=3..6 (see run_player_dna.py --k).",
     )
     return p.parse_args()
 
@@ -325,8 +350,56 @@ def main() -> None:
     # logged as an error if it ever occurs).
     df = apply_percentile_scoring(df)
 
-    # ── Step 5: Export ────────────────────────────────────────────────────────
-    logger.info("Step 5/5 — Exporting results...")
+    # ── Step 5: Player DNA (K-Means, ML layer — NEW 2026-07-29) ───────────────
+    # Descriptive/exploratory play-style tag, NOT a selection input — see
+    # analytics/ml/player_clustering.py module docstring for the full
+    # rationale (why this ships and Selection Classifier / Injury Predictor
+    # don't, yet). Wrapped in try/except: a clustering failure must never
+    # block a real squad-selection run, same pattern as --use-clubelo above.
+    if args.no_player_dna:
+        logger.info("Step 5/6 — Player DNA clustering SKIPPED (--no-player-dna).")
+        df["PlayerDNA"] = "N/A"
+        df["player_dna_cluster"] = pd.NA
+        df["dna_imputed_features_count"] = pd.NA
+        dna_archetype_map: dict = {}
+        dna_k = None
+    else:
+        logger.info("Step 5/6 — Player DNA clustering (K-Means)...")
+        try:
+            dna_result = cluster_players(df, k=args.player_dna_k)
+            df = dna_result.df
+            dna_archetype_map = dna_result.archetype_map
+            dna_k = dna_result.k
+            if dna_result.silhouette_table:
+                best_sil = dna_result.silhouette_table[dna_result.k]
+                sil_str = ", ".join(f"k={k}:{v:.3f}" for k, v in sorted(dna_result.silhouette_table.items()))
+                logger.info("Player DNA: k=%d chosen (silhouette=%.3f). All k tried: %s",
+                             dna_result.k, best_sil, sil_str)
+                if best_sil < 0.30:
+                    logger.warning(
+                        "Player DNA silhouette=%.3f (k=%d) is below the ~0.3-0.5 "
+                        "range usually considered real cluster structure — expected "
+                        "with continuous per-90 stats and %d outfield players. "
+                        "Treat PlayerDNA as a descriptive dashboard tag, NOT a "
+                        "selection input. See analytics/ml/player_clustering.py.",
+                        best_sil, dna_result.k, dna_result.n_outfield,
+                    )
+            logger.info("Player DNA archetype counts:\n%s",
+                         df["PlayerDNA"].value_counts().to_string())
+        except Exception as e:
+            logger.error(
+                "Player DNA clustering FAILED (%s) — falling back to 'N/A' for "
+                "everyone. Rest of the pipeline (scoring, squad selection) is "
+                "unaffected, since PlayerDNA is not a scoring input.", e,
+            )
+            df["PlayerDNA"] = "N/A"
+            df["player_dna_cluster"] = pd.NA
+            df["dna_imputed_features_count"] = pd.NA
+            dna_archetype_map = {}
+            dna_k = None
+
+    # ── Step 6: Export ────────────────────────────────────────────────────────
+    logger.info("Step 6/6 — Exporting results...")
 
     # Full scored table
     full_path = output_dir / f"players_scored_{run_date}.csv"
@@ -342,6 +415,7 @@ def main() -> None:
         "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
         "MentalScore", "AvailabilityScore", "InternationalScore",
         "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
+        "PlayerDNA",
     ]
     top_cols = [c for c in top_cols if c in top_df.columns]
     top_path = output_dir / f"top{args.top_n}_{run_date}.csv"
@@ -352,6 +426,17 @@ def main() -> None:
     # Squad summary JSON — MUST use squad_df (position-capped), not the raw df
     summary = build_squad_summary(squad_df, df, args.top_n)
     summary["percentile_summary"] = score_summary(df, top_n=args.top_n)  # WIRED IN 2026-07-14
+    # NEW 2026-07-29 — Player DNA breakdown WITHIN the selected squad only.
+    # Descriptive only: never used by select_squad_with_position_cap() above,
+    # squad selection already happened by the time this runs.
+    summary["player_dna"] = {
+        "k_chosen": dna_k,
+        "archetype_map": dna_archetype_map,
+        "squad_archetype_counts": (
+            squad_df["PlayerDNA"].value_counts().to_dict()
+            if "PlayerDNA" in squad_df.columns else {}
+        ),
+    }
     summary_path = output_dir / f"squad_summary_{run_date}.json"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
     logger.info("Squad summary: %s", summary_path)
@@ -378,9 +463,9 @@ def main() -> None:
     logger.info("-" * 60)
     for _, row in top_df[top_cols].iterrows():
         logger.info(
-            "#%-3d %-28s %-8s %-25s DSS=%.4f",
+            "#%-3d %-28s %-8s %-25s DSS=%.4f  DNA=%s",
             row["Rank"], row["player_name"], row["position"],
-            row.get("club", "")[:24], row["DSSScore"],
+            row.get("club", "")[:24], row["DSSScore"], row.get("PlayerDNA", "N/A"),
         )
     logger.info("=" * 60)
 

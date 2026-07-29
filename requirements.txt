@@ -40,3 +40,4 @@ transformers
 torch
 sentencepiece
 tiktoken
+scikit-learn

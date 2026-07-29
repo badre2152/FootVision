@@ -264,6 +264,16 @@ def compute_mental_score(df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Computing MentalScore for %d players (SoFIFA COALESCE)...", len(df))
 
+    if "sb_mental_data_real" not in df.columns:
+        logger.error(
+            "sb_mental_data_real column missing — Silver parquet was built with "
+            "an OLDER version of silver_pipeline.py (before the 2026-07-29 "
+            "provenance fix). mental_source will be UNRELIABLE for this run "
+            "(will not correctly distinguish real StatsBomb data from "
+            "position-median imputed values). Re-run run_silver.py with the "
+            "current code before trusting mental_source in this output."
+        )
+
     gk_mental_weights = {
         "sb_passes_per90":  0.60,
         "sb_carries_per90": 0.40,
@@ -314,13 +324,23 @@ def compute_mental_score(df: pd.DataFrame) -> pd.DataFrame:
     def _mental(row: pd.Series) -> tuple[float, str]:
         """يُعيد (score, source)."""
         # ── Source 1: StatsBomb ──────────────────────────────────────────
-        if row.get("position") == "GK":
-            sb_score = compute_weighted_subscore(row, gk_mental_weights)
-        else:
-            sb_score = compute_weighted_subscore(row, MENTAL_WEIGHTS)
+        # FIX (2026-07-29): compute_weighted_subscore() تقرا من الأعمدة *_norm،
+        # اللي راه Silver عوّضتها بالmedian للاعبين اللي ماعندهمش بيانات حقيقية
+        # (impute_by_position). يعني sb_score كان دايماً non-NaN، وكان الكود
+        # يصنّف الكل "statsbomb" — حتى الـ38/49 المُعوَّضين. نستعمل دابا
+        # sb_mental_data_real (مُسجَّل فـ Silver *قبل* أي imputation) كبوابة
+        # صادقة: لاعب بلا بيانات حقيقية ما يتصنّفش "statsbomb" حتى لو الرقم
+        # موجود (لأنه فـ الحقيقة رقم الmedian، ماشي بياناته).
+        has_real_sb_data = bool(row.get("sb_mental_data_real", False))
 
-        if sb_score is not None and not (isinstance(sb_score, float) and sb_score != sb_score):
-            return sb_score, "statsbomb"
+        if has_real_sb_data:
+            if row.get("position") == "GK":
+                sb_score = compute_weighted_subscore(row, gk_mental_weights)
+            else:
+                sb_score = compute_weighted_subscore(row, MENTAL_WEIGHTS)
+
+            if sb_score is not None and not (isinstance(sb_score, float) and sb_score != sb_score):
+                return sb_score, "statsbomb"
 
         # ── Source 2: SoFIFA ─────────────────────────────────────────────
         sof_score = _sofifa_mental(row)

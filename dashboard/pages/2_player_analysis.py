@@ -48,12 +48,14 @@ selected_id = label_to_id[selected_label]
 row = players[players["player_id"] == selected_id].iloc[0]
 
 # ── Header metrics ───────────────────────────────────────────────────────
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Club", row.get("club", "—"))
 col2.metric("Position", row.get("position", "—"))
 col3.metric("DSSScore", f"{row['DSSScore']:.4f}", f"Rank #{int(row['Rank'])}")
 if "minutes_flag" in row.index:
     col4.metric("Minutes flag", row["minutes_flag"])
+if "PlayerDNA" in row.index and row["PlayerDNA"] not in (None, "N/A"):
+    col5.metric("Player DNA", row["PlayerDNA"])  # descriptive tag, not a score input
 
 st.divider()
 
