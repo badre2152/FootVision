@@ -77,6 +77,40 @@ def load_latest_squad_summary() -> dict | None:
     return data
 
 
+def load_latest_selection_audit() -> dict | None:
+    """
+    Loads the most recent selection_audit_*.json, produced by
+    run_selection_audit.py (NOT run_gold.py — this is a standalone,
+    deliberately-not-wired-in analysis, see that script's header for why).
+    """
+    path = _latest_file(GOLD_DIR, "selection_audit_", ".json")
+    if path is None:
+        logger.warning("No selection_audit_*.json found in %s — run run_selection_audit.py first.", GOLD_DIR)
+        return None
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["_source_file"] = path.name
+    return data
+
+
+def load_latest_injury_predictor() -> dict | None:
+    """
+    Loads the most recent injury_predictor_summary_*.json, produced by
+    run_injury_predictor.py (analytics/ml/injury_predictor.py — transparent
+    rule-based index, NOT a trained model). Replaced the earlier
+    load_latest_injury_risk()/run_injury_risk.py (LOOCV ML attempt) on
+    2026-07-29 — see run_injury_predictor.py's header for why.
+    """
+    path = _latest_file(GOLD_DIR, "injury_predictor_summary_", ".json")
+    if path is None:
+        logger.warning("No injury_predictor_summary_*.json found in %s — run run_injury_predictor.py first.", GOLD_DIR)
+        return None
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["_source_file"] = path.name
+    return data
+
+
 def load_latest_chemistry_pairs() -> list[dict]:
     """
     Loads the most recent statsbomb_chemistry/chemistry_pairs_*.json

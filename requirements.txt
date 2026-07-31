@@ -41,3 +41,6 @@ torch
 sentencepiece
 tiktoken
 scikit-learn
+scipy
+mplsoccer
+matplotlib

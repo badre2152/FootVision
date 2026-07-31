@@ -411,7 +411,7 @@ def main() -> None:
     squad_df = select_squad_with_position_cap(df, top_n=args.top_n)
     top_df   = squad_df
     top_cols = [
-        "Rank", "player_name", "position", "club", "league",
+        "Rank", "player_id", "player_name", "position", "club", "league",
         "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
         "MentalScore", "AvailabilityScore", "InternationalScore",
         "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",

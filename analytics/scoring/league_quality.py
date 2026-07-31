@@ -1,13 +1,32 @@
 # analytics/scoring/league_quality.py
-# League Quality Coefficients — GK GA/90 Bias Correction
+# League Quality Coefficients — Cross-Position Bias Correction
 #
-# Problem: GA/90 is not league-independent. A Botola Pro GK facing 4 shots/game
-# naturally concedes fewer goals than a Saudi Pro League GK facing 8+ shots/game.
-# Without adjustment, Botola GKs appear artificially elite.
+# Problem (original, GK-only): GA/90 is not league-independent. A Botola
+# Pro GK facing 4 shots/game naturally concedes fewer goals than a Saudi
+# Pro League GK facing 8+ shots/game. Without adjustment, Botola GKs
+# appear artificially elite.
+#
+# EXTENDED (2026-07-29): the exact same bias applies to EVERY position,
+# not just GKs. A Botola/UAE/Greece forward scoring goals or a defender
+# making tackles faces weaker opposition too — their raw Gls_per90,
+# Ast_per90, xg_per90, xa_per90, Tkl_per90, Int_per90, Clr_per90 are all
+# inflated the same way GK GA_per90 was deflated. This was flagged
+# repeatedly across multiple review sessions but never fixed until now:
+# adjust_gk_ga_per90() only ever touched the GK defensive_score branch of
+# compute_performance_score(), leaving 100% of outfield offensive/
+# defensive scoring completely unadjusted for league quality.
+#
+# Fix: adjust_stat_for_league() (below) is now the general-purpose entry
+# point. adjust_gk_ga_per90() is kept as a thin backward-compatible
+# wrapper around it. compute_performance_score() now calls the general
+# function for outfield offensive_score AND defensive_score too — see
+# performance_score.py's _outfield_offensive()/_outfield_defensive().
 #
 # Fix: multiply raw GA/90 by a league difficulty factor before normalization.
-# adjusted_GA_per90 = raw_GA_per90 * league_factor
-# Lower factor = weaker league = inflate GA/90 toward a league-neutral baseline.
+# adjusted_GA_per90 = raw_GA_per90 / league_factor  (inverse stat — inflate)
+# adjusted_offensive/defensive_stat = raw * league_factor  (deflate)
+# Lower factor = weaker league = push the raw number toward a league-neutral
+# baseline (worse for "lower is better" stats, lower for "higher is better").
 #
 # Coefficients are derived from:
 #   - UEFA/CAF coefficient rankings (2024-25 season)
@@ -17,9 +36,12 @@
 # Methodology: Big-5 avg (Premier League / La Liga / Bundesliga) = 1.00 baseline.
 # All others indexed relative to that.
 #
-# IMPORTANT: This correction applies ONLY to GK GA_per90 normalization input.
-# It does NOT change the raw Silver GA_per90 column (preserve source data).
-# The adjusted value is used transiently inside compute_performance_score().
+# IMPORTANT: This correction applies transiently, inside
+# compute_performance_score(). It does NOT change the raw Silver columns
+# (preserve source data) — adjustment + normalization happen together on
+# a per-row basis, bypassing the globally-precomputed *_norm columns from
+# normalize_all() (which run before league adjustment can be applied and
+# therefore cannot reflect it).
 
 import logging
 
@@ -95,28 +117,58 @@ def get_league_factor(league: str | None) -> float:
     return LEAGUE_DIFFICULTY["_default"]
 
 
-def adjust_gk_ga_per90(ga_per90: float, league: str | None) -> float:
+def adjust_stat_for_league(value: float, league: str | None, inverse: bool = False) -> float:
     """
-    Applies league difficulty adjustment to a GK's raw GA/90.
+    تعديل عام لأي إحصائية بناءً على جودة الدوري — يُستعمل لكل المراكز،
+    ماشي غير الحراس (adjust_gk_ga_per90 قبل هذا الإصلاح 2026-07-29 كانت
+    الوحيدة، وهذا كان عيب منهجي خطير: لاعب هجومي/دفاعي فـ Botola كيسجّل
+    أهداف/يدير تدخلات أسهل من نظيره فـ Big-5، بنفس منطق GA/90 بالضبط،
+    لكن ما كان عندو أي تعديل).
 
-    adjusted = raw * (1 / factor)
-    — A Botola GK with GA/90=0.38 and factor=0.72 gets adjusted to 0.53,
-      making them more comparable to a Big-5 GK conceding 0.53/game.
+    inverse=False (الافتراضي — للإحصائيات "الأعلى أحسن": أهداف، تمريرات
+        حاسمة، xG، xA، تدخلات، اعتراضات...):
+        دوري أضعف → الرقم الخام مُضخَّم artificially → نُنقّصه (نضرب × factor)
+        adjusted = raw * factor   (factor<1 يُنقّص الرقم لمستوى Big-5 عادل)
+
+    inverse=True (للإحصائيات "الأقل أحسن": GA/90 للحراس):
+        دوري أضعف → الرقم الخام مُنخفَض artificially (أفضل مما يستحق) → نُضخّمه
+        adjusted = raw / factor   (factor<1 يُضخّم الرقم)
 
     Args:
-        ga_per90: Raw goals-against per 90 minutes.
-        league:   League name from Silver 'league' column.
+        value:   القيمة الخام.
+        league:  اسم الدوري (من عمود Silver 'league').
+        inverse: True لإحصائيات "الأقل أحسن" (GA/90)، False لكل الباقي.
 
     Returns:
-        Adjusted GA/90 — higher than raw for weaker leagues.
+        القيمة المُعدَّلة — قابلة للمقارنة عبر الدوريات المختلفة.
     """
     factor = get_league_factor(league)
     if factor <= 0:
-        return ga_per90
-    adjusted = ga_per90 / factor
+        return value
+    return value / factor if inverse else value * factor
+
+
+def adjust_gk_ga_per90(ga_per90: float, league: str | None) -> float:
+    """
+    تعديل GA/90 للحراس بناءً على جودة الدوري — الآن wrapper رقيق فوق
+    adjust_stat_for_league() (نفس السلوك بالضبط، أبقيناها لتوافق الكود
+    القديم اللي كيستدعيها مباشرة).
+
+    adjusted = raw * (1 / factor)
+    — حارس Botola بـGA/90=0.38 و factor=0.72 كيتعدَّل لـ0.53، مما يخليه
+      أقرب للمقارنة مع حارس Big-5 كيدّي 0.53/الماتش.
+
+    Args:
+        ga_per90: GA/90 خام.
+        league:   اسم الدوري من عمود Silver 'league'.
+
+    Returns:
+        GA/90 مُعدَّل — أعلى من الخام للدوريات الأضعف.
+    """
+    adjusted = adjust_stat_for_league(ga_per90, league, inverse=True)
     if abs(adjusted - ga_per90) > 0.05:
         logger.debug(
             "GA/90 adjusted: raw=%.3f factor=%.2f adjusted=%.3f (league='%s')",
-            ga_per90, factor, adjusted, league,
+            ga_per90, get_league_factor(league), adjusted, league,
         )
     return adjusted

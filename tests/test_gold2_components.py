@@ -221,18 +221,38 @@ class TestMinutesFilterWeightBinding:
         keys are "PerformanceScore", "TacticalFitScore"...), so it silently
         ALWAYS used the hardcoded defaults regardless of config.py.
 
-        This test proves the fix: changing COMPOSITE_WEIGHTS in config.py
-        must actually change the recomputed DSSScore. If this test ever
-        fails again, the dead-key bug has regressed.
+        UPDATED (2026-07-29): apply_minutes_filter() no longer computes
+        DSSScore at all — that duplicate/dead-key-bound computation was
+        removed entirely (see BUG: apply_dss_gate() ordering fix same day).
+        DSSScore is now computed exactly once, by compute_final_score()
+        (which already reads config.COMPOSITE_WEIGHTS correctly), and the
+        minutes-based gate is applied afterwards by apply_dss_gate(). This
+        test now exercises the full, correctly-ordered pipeline:
+            apply_minutes_filter() -> compute_final_score() -> apply_dss_gate()
+        and proves the ORIGINAL intent still holds end-to-end: mutating
+        COMPOSITE_WEIGHTS in config.py must actually change the final
+        DSSScore. If this test ever fails again, either the dead-key bug
+        regressed, or a new ordering bug (like the 2026-07-29 one, where
+        apply_dss_gate() ran before compute_final_score() and got its
+        result silently overwritten) was reintroduced.
         """
+        from analytics.scoring.minutes_filter import apply_dss_gate
+
         df = _fully_scored_df(n=5)
         df["inj_days_missed_2y"] = 0
         df["fm_min"] = 900  # plenty of minutes -> ACTIVE, no availability penalty
 
         original_weights = dict(config.COMPOSITE_WEIGHTS)
 
-        # Run once with the real config weights
+        # الترتيب الصحيح: minutes_filter (تصنيف) -> compute_final_score (DSSScore
+        # الوحيد) -> apply_dss_gate (البوابة). نفس الترتيب المستعمل فعلياً فـ run_gold.py
         df1 = apply_minutes_filter(df.copy())
+        df1 = compute_final_score(df1)
+        df1 = apply_dss_gate(df1)
+        assert "DSSScore" in df1.columns, (
+            "DSSScore missing after the full pipeline — apply_minutes_filter() -> "
+            "compute_final_score() -> apply_dss_gate() must produce it exactly once."
+        )
 
         # Now drastically change ONE weight and confirm the output changes
         mutated_weights = dict(original_weights)
@@ -240,16 +260,46 @@ class TestMinutesFilterWeightBinding:
         mutated_weights["FormScore"] = max(0.0001, 1 - sum(
             v for k, v in mutated_weights.items() if k != "FormScore"
         ))
+        # ملاحظة اكتُشفت أثناء هذا التحديث: compute_final_score() تستورد
+        # COMPOSITE_WEIGHTS على مستوى الملف (import علوي فـ performance_score.py)،
+        # ماشي جوّا الدالة كيما كانت apply_minutes_filter() القديمة. يعني
+        # monkeypatch.setattr(config, "COMPOSITE_WEIGHTS", ...) وحدها ماكافيتش
+        # — خاصنا نبدّل الاسم المربوط مباشرة فـ namespace performance_score.py.
+        # هذا فرق سلوك حقيقي (module-level import = قراءة مرة وحدة عند
+        # الimport، ماشي "قراءة حية" فـ كل استدعاء) يستاهل تحقق فـ الإنتاج،
+        # لكن ماشي bug جديد — التصميم كان هكذا أصلاً قبل هاذ الجلسة.
         monkeypatch.setattr(config, "COMPOSITE_WEIGHTS", mutated_weights)
-        # minutes_filter.py does `from config import COMPOSITE_WEIGHTS` at call
-        # time inside the function body, so monkeypatching the config module
-        # attribute is sufficient — no need to reload the minutes_filter module.
+        import analytics.scoring.performance_score as _perf_mod
+        monkeypatch.setattr(_perf_mod, "COMPOSITE_WEIGHTS", mutated_weights)
         df2 = apply_minutes_filter(df.copy())
+        df2 = compute_final_score(df2)
+        df2 = apply_dss_gate(df2)
 
         assert not df1["DSSScore"].equals(df2["DSSScore"]), (
-            "DSSScore did not change after mutating COMPOSITE_WEIGHTS — the "
-            "dead-key binding bug (w.get() with keys that don't exist in "
-            "COMPOSITE_WEIGHTS) has regressed."
+            "DSSScore did not change after mutating COMPOSITE_WEIGHTS — either "
+            "the dead-key binding bug (w.get() with keys that don't exist in "
+            "COMPOSITE_WEIGHTS) has regressed, or compute_final_score() is no "
+            "longer being called / no longer reads config.py correctly."
+        )
+
+        # BUG-01 ordering regression guard: apply_dss_gate() must run AFTER
+        # compute_final_score(), never before. If someone reorders the calls
+        # back to the 2026-07-29 broken order, apply_dss_gate() would gate a
+        # DSSScore that gets silently overwritten right after — this would
+        # NOT raise an exception, so we assert the gate's effect is actually
+        # visible in the final output instead.
+        active_all = df.copy()
+        active_all["active_2526"] = "yes"
+        active_all["fm_min"] = 900
+        active_all = apply_minutes_filter(active_all)
+        active_all.loc[active_all.index[0], "minutes_flag"] = "SEED_INACTIVE"
+        gated = compute_final_score(active_all.copy())
+        gated = apply_dss_gate(gated)
+        ungated_equiv = compute_final_score(active_all.copy())
+        assert gated["DSSScore"].iloc[0] < ungated_equiv["DSSScore"].iloc[0] * 0.5, (
+            "apply_dss_gate() had no meaningful effect on a SEED_INACTIVE "
+            "player's final DSSScore — the ordering bug (gate applied before "
+            "compute_final_score, then silently discarded) may have regressed."
         )
 
 

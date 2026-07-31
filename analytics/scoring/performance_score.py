@@ -84,22 +84,48 @@ def compute_performance_score(df: pd.DataFrame) -> pd.DataFrame:
 
     gk_mask = df["position"] == "GK"
 
-    # Offensive: outfield only (GKs get 0.0 — they don't score)
+    # ── Offensive score ─────────────────────────────────────────────────────
+    # FIX (2026-07-29): كانت هذي الدالة كتقرا مباشرة من الأعمدة *_norm
+    # (محسوبة عالمياً فـ normalize_all() قبل ما نعرف الدوري ديال كل لاعب) —
+    # يعني مافيهاش أي تعديل لجودة الدوري إطلاقاً. نفس التحيز اللي كان موجود
+    # فـ GA/90 قبل الإصلاح الأول (Botola/Saudi/UAE... مضخَّمين artificially)
+    # كان موجود هنا بنفس القوة، غير مافيهاش حل. الحل: نبني الأعمدة المُعدَّلة
+    # يدوياً (raw → league-adjust → normalize) بنفس نمط _gk_defensive أسفله،
+    # بدل الاعتماد على *_norm الجاهزة.
+    from config import NORMALIZATION_BOUNDS
+    from analytics.scoring.league_quality import adjust_gk_ga_per90, adjust_stat_for_league
+
+    _OFFENSIVE_RAW_MAP = [
+        # (مفتاح الوزن فـ OFFENSIVE_WEIGHTS, عمود Silver الخام, مفتاح NORMALIZATION_BOUNDS)
+        ("Gls_per90", "Gls_per90", "Gls_per90"),
+        ("Ast_per90", "Ast_per90", "Ast_per90"),
+        ("xg_per90",  "xg_per90",  "xg_per90"),
+        ("xa_per90",  "xa_per90",  "xa_per90"),
+    ]
+
+    def _league_adjusted_norm(row: pd.Series, raw_col: str, bounds_key: str,
+                               inverse: bool = False) -> float:
+        """raw → league-adjust → clip/normalize، يُعيد NaN إذا القيمة الخام مفقودة."""
+        raw = row.get(raw_col)
+        if raw is None or pd.isna(raw):
+            return np.nan
+        adjusted = adjust_stat_for_league(float(raw), row.get("league"), inverse=inverse)
+        mn, mx = NORMALIZATION_BOUNDS.get(bounds_key, (0.0, 1.0))
+        clipped = max(mn, min(mx, adjusted))
+        return round((clipped - mn) / (mx - mn), 4) if mx > mn else 0.5
+
+    def _outfield_offensive(row: pd.Series) -> float:
+        adj = {
+            f"{wk}_lgadj": _league_adjusted_norm(row, raw_col, bounds_key)
+            for wk, raw_col, bounds_key in _OFFENSIVE_RAW_MAP
+        }
+        return compute_weighted_subscore(pd.Series(adj), OFFENSIVE_WEIGHTS, suffix="_lgadj")
+
     df["offensive_score"] = df.apply(
         lambda r: 0.0 if r.get("position") == "GK"
-        else compute_weighted_subscore(r, OFFENSIVE_WEIGHTS),
+        else _outfield_offensive(r),
         axis=1,
     )
-
-    # ── Defensive score ─────────────────────────────────────────────────────
-    # GK      → GA_per90 league-adjusted (league_quality.py)
-    #           BUG-02 FIX: GA=0 imputed → حارس يحصل defensive_score=1.0
-    #           الحل: إذا ga_imputed_flag=True → إرجاع median بدل 1.0
-    # Outfield → raw source cols (sd_tkl/fm_tkl) وليس COALESCED Tkl_per90
-    #           BUG-01 FIX: Tkl_per90=0.0 imputed → defensive_score=0.0
-    #           الحل: raw sources + floor=0.30 (لاعب هجومي = neutral وليس عقوبة)
-    from config import NORMALIZATION_BOUNDS
-    from analytics.scoring.league_quality import adjust_gk_ga_per90
 
     _GK_DEF_MEDIAN = 0.55  # median تجريبي من run حقيقي
 
@@ -130,6 +156,16 @@ def compute_performance_score(df: pd.DataFrame) -> pd.DataFrame:
 
         if tkl is None and int_ is None and clr is None:
             return FLOOR
+
+        # FIX (2026-07-29): تعديل جودة الدوري — نفس منطق GA/90 للحراس، لكن
+        # هنا الاتجاه "الأعلى أحسن" (تدخل/اعتراض أكثر = أفضل)، فـ دوري أضعف
+        # كيضخّم الرقم artificially (فرص دفاعية أسهل/ضغط أقل) → نُنقّصه
+        # (نضرب × factor، factor<1) قبل التطبيع، بدل ما نطبّعو الرقم الخام
+        # مباشرة كيما كان يصير قبل هذا الإصلاح.
+        league = row.get("league")
+        tkl = adjust_stat_for_league(tkl, league) if tkl is not None else None
+        int_ = adjust_stat_for_league(int_, league) if int_ is not None else None
+        clr = adjust_stat_for_league(clr, league) if clr is not None else None
 
         def _n(v, col):
             if v is None:
