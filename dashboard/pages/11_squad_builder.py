@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_top26, load_latest_players_scored
 from dashboard.sidebar import render_sidebar
+from dashboard.notes_store import get_all_notes
 from analytics.competition_context import build_best_xi, FORMATIONS
 
 st.set_page_config(page_title="Football Atlas — Squad Builder", page_icon="🛠️", layout="wide")
@@ -181,3 +182,23 @@ st.dataframe(
     manual_xi_sorted[display_cols].style.format({"DSSScore": "{:.4f}"}),
     width="stretch", height=430, hide_index=True,
 )
+
+# ── #20 — Coach/Staff Notes, compact read-only view ─────────────────────
+# This page uses player_name as its id_col throughout (see the module
+# docstring above for why player_id isn't reliably present here), but
+# notes_store is keyed by player_id — so notes are looked up via
+# players_full, which always has a real player_id column, joined back on
+# player_name (the one column guaranteed present everywhere on this page).
+if "player_id" in players_full.columns:
+    st.subheader("Coach notes for this XI")
+    all_notes = get_all_notes()
+    name_to_id = dict(zip(players_full["player_name"], players_full["player_id"]))
+    for _, xi_row in manual_xi_sorted.iterrows():
+        pid = name_to_id.get(xi_row["player_name"])
+        note = all_notes.get(str(pid)) if pid is not None else None
+        with st.expander(f"📝 {xi_row['player_name']}"):
+            if note and note.get("text"):
+                st.write(note["text"])
+                st.caption(f"Last edited by {note['author']} at {note['updated_at']} UTC")
+            else:
+                st.caption("No coach note yet — add one from the Player Analysis page.")

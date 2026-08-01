@@ -76,3 +76,72 @@ top_pairs_display = top_pairs[["player_a_name", "player_b_name", "chem_per90", "
     }
 )
 st.dataframe(top_pairs_display, width='stretch', hide_index=True)
+
+# ── #19 — ChemistryScore real vs imputed transparency ──────────────────────
+# The heatmap/duos above only ever show REAL pairs (11/49 candidates) —
+# by construction it can't be misleading. But ChemistryScore/chem_avg_per90
+# in the Gold output is 49/49 non-null AFTER Silver's position-group median
+# imputation, and until now there was no visual signal telling a dashboard
+# reader which of those 49 values are a player's own real pairwise signal
+# vs. a neutral position-median fallback — the same gap PressureIndex had
+# on the Set Piece & Clutch page (see analytics/set_piece_analyzer.py),
+# now closed here using the "chem_is_real" flag set in
+# ingestion/silver_pipeline.py::join_chemistry_pairs() BEFORE imputation.
+st.divider()
+st.subheader("ChemistryScore — real vs imputed (all candidates)")
+
+players = load_latest_players_scored()
+
+if players is None or "ChemistryScore" not in players.columns:
+    st.info(
+        "No `players_scored_*.csv` with ChemistryScore found. Run `run_gold.py` "
+        "to see the real-vs-imputed breakdown for all candidates here."
+    )
+else:
+    if "chem_is_real" in players.columns:
+        confidence = players["chem_is_real"].map({True: "Real", False: "Imputed"})
+    elif "chem_num_partners" in players.columns:
+        # Backward-compat fallback for Gold files produced before the
+        # chem_is_real flag existed (chem_num_partners > 0 implies the
+        # same thing, just not as an explicit column).
+        confidence = (players["chem_num_partners"] > 0).map({True: "Real", False: "Imputed"})
+    else:
+        confidence = pd.Series("Unknown", index=players.index)
+
+    chem_view = players.copy()
+    chem_view["chem_confidence"] = confidence
+
+    n_real = int((chem_view["chem_confidence"] == "Real").sum())
+    n_imputed = int((chem_view["chem_confidence"] == "Imputed").sum())
+
+    col1, col2 = st.columns(2)
+    col1.metric(
+        "Players with real StatsBomb chemistry data", n_real,
+        help="Had at least one real pairwise chem_per90 value before Silver's position-group imputation ran.",
+    )
+    col2.metric("Position-median imputed (not their own signal)", n_imputed)
+
+    if n_imputed > n_real:
+        st.warning(
+            f"⚠️ {n_imputed}/{len(chem_view)} players' ChemistryScore is a position-group "
+            f"median fallback, not their own real signal — always check 'Data confidence' "
+            f"before reading anything into an individual's ChemistryScore below."
+        )
+
+    fig3 = px.bar(
+        chem_view.sort_values("ChemistryScore"),
+        x="ChemistryScore", y="player_name", orientation="h",
+        color="chem_confidence",
+        color_discrete_map={"Real": "#22c55e", "Imputed": "#6b7280", "Unknown": "#6b7280"},
+        height=max(500, 18 * len(chem_view)),
+    )
+    fig3.update_layout(margin=dict(t=20, b=20), yaxis_title="")
+    st.plotly_chart(fig3, width="stretch")
+
+    display_cols = [c for c in ["player_name", "position", "club", "chem_avg_per90", "ChemistryScore", "chem_confidence"] if c in chem_view.columns]
+    st.dataframe(
+        chem_view[display_cols].reset_index(drop=True).style.format(
+            {"chem_avg_per90": "{:.3f}", "ChemistryScore": "{:.4f}"}, na_rep="—"
+        ),
+        width="stretch", height=450,
+    )

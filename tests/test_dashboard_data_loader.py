@@ -1,11 +1,21 @@
 # tests/test_dashboard_data_loader.py
 #
-# Tests dashboard/data_loader.py in isolation — no Streamlit, no real
-# gold/ folder dependency (uses pytest's tmp_path + monkeypatch to point
-# the module at a synthetic, throwaway directory instead). This means
-# these tests keep passing regardless of what's currently in the real
-# gold/ folder, and don't get slower or flakier as more real runs pile up
-# there over time.
+# Tests dashboard/data_loader.py in isolation — no real gold/ folder
+# dependency (uses pytest's tmp_path + monkeypatch to point the module at
+# a synthetic, throwaway directory instead). This means these tests keep
+# passing regardless of what's currently in the real gold/ folder, and
+# don't get slower or flakier as more real runs pile up there over time.
+#
+# CACHING NOTE (spec #22, added 2026-08-01): every load_latest_*()/
+# load_all_*() function in data_loader.py is now wrapped in
+# @st.cache_data(ttl=300) — see that module's docstring. Those functions
+# take NO arguments, so Streamlit's cache key collapses to ONE global slot
+# per function, shared across every test in this file/process. Without
+# clearing it, test B calling load_latest_top26() right after test A
+# would silently get test A's cached result even though `fake_dirs` points
+# GOLD_DIR at a brand-new tmp_path for test B — a real, non-obvious way
+# for these tests to start lying. `fake_dirs` below calls `.clear()` on
+# every cached function before each test to prevent exactly that.
 
 import json
 import sys
@@ -18,10 +28,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import dashboard.data_loader as dl
 
+_CACHED_LOADERS = [
+    dl.load_latest_top26,
+    dl.load_latest_players_scored,
+    dl.load_latest_squad_summary,
+    dl.load_latest_selection_audit,
+    dl.load_latest_injury_predictor,
+    dl.load_latest_chemistry_pairs,
+    dl.load_all_players_scored_history,
+]
+
 
 @pytest.fixture
 def fake_dirs(tmp_path, monkeypatch):
-    """Points GOLD_DIR/BRONZE_DIR at a fresh temp directory for each test."""
+    """Points GOLD_DIR/BRONZE_DIR at a fresh temp directory for each test,
+    and clears every @st.cache_data-wrapped loader's cache so a previous
+    test's cached result can never leak into this one (see module docstring)."""
+    for fn in _CACHED_LOADERS:
+        fn.clear()
     gold_dir = tmp_path / "gold"
     bronze_dir = tmp_path / "bronze"
     gold_dir.mkdir()

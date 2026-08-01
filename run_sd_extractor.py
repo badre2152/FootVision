@@ -34,15 +34,29 @@ def parse_args() -> argparse.Namespace:
         "--dry-run", action="store_true",
         help="Extract but do NOT upload to MinIO.",
     )
+    p.add_argument(
+        "--as-of", default=None,
+        help=(
+            "YYYY-MM-DD decision-date cutoff (config.DECISION_DATE by default). "
+            "NOTE: this extractor re-parses an already-scraped sofascore_detail "
+            "Bronze blob (career + season tables) and applies no date-window "
+            "filtering of its own. This flag is accepted for CLI consistency "
+            "(01_temporal_cutoff.md req. #3) and logged only — the real cutoff "
+            "enforcement point for SofaScore data would be sofascore_detail_loader.py "
+            "if/when it gains lookback-window logic."
+        ),
+    )
     return p.parse_args()
 
 
 def main():
     args     = parse_args()
+    from config import DECISION_DATE
+    as_of    = args.as_of or DECISION_DATE.isoformat()
     run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     logger.info("=" * 60)
-    logger.info("SofaScore Detail Extractor — run_date: %s", run_date)
+    logger.info("SofaScore Detail Extractor — run_date: %s | as-of: %s", run_date, as_of)
     logger.info("limit    : %s", args.limit if args.limit else "all 49")
     logger.info("dry-run  : %s", args.dry_run)
     logger.info("=" * 60)

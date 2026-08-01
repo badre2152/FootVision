@@ -137,12 +137,33 @@ Examples:
             "Use in CI/CD to catch MinIO connectivity issues early."
         ),
     )
+    # ── TEMPORAL CUTOFF FIX (01_temporal_cutoff.md) ─────────────────────────
+    p.add_argument(
+        "--as-of",
+        default=None,
+        help=(
+            "YYYY-MM-DD decision-date cutoff applied to every date-relative "
+            "Bronze loader (currently: transfermarkt_injury — 2-year lookback "
+            "window + ongoing-injury day estimate). Defaults to "
+            "config.DECISION_DATE. NOTE: this is NOT the same as run_date "
+            "(the filename timestamp of THIS scrape) — --as-of controls what "
+            "the DATA reflects, run_date only controls where it's filed in "
+            "MinIO."
+        ),
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args     = parse_args()
-    run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_date = datetime.now().strftime("%Y%m%d_%H%M%S")  # filename timestamp only — real time is fine here
+
+    # TEMPORAL CUTOFF FIX: as_of controls DATA content, defaults to DECISION_DATE.
+    from datetime import date as _date_cls
+    from config import DECISION_DATE
+    as_of_date = _date_cls.fromisoformat(args.as_of) if args.as_of else DECISION_DATE
+    as_of_dt   = datetime.combine(as_of_date, datetime.min.time())
+    logger.info("as-of (decision-date cutoff): %s", as_of_date.isoformat())
 
     # --only-flashscore sets all other skips automatically
     if args.only_flashscore:
@@ -225,7 +246,7 @@ def main() -> None:
         else:
             logger.warning("SofaScore detail loader not available - skipping (sofascore_detail_loader.py import failed)")
     if not args.skip_injury:
-        _run("injury",        load_injury_bronze,        seed_df, run_date)
+        _run("injury",        load_injury_bronze,        seed_df, run_date, as_of_dt)
     if not args.skip_intl:
         _run("intl",          load_intl_bronze,          seed_df, run_date)
     if not args.skip_flashscore:

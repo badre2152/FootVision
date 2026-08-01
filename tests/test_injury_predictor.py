@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 from analytics.ml.injury_predictor import (
     compute_injury_risk,
     _age_component,
@@ -227,7 +228,16 @@ class TestComputeInjuryRisk:
         r_late = compute_injury_risk(df, reference_date=date(2030, 1, 1))
         assert r_late.df.iloc[0]["injury_risk_age_component"] > r_early.df.iloc[0]["injury_risk_age_component"]
 
-    def test_default_reference_date_is_today_when_not_provided(self):
+    def test_default_reference_date_is_decision_date_not_today(self):
+        # spec #4 fix: compute_injury_risk() must default to
+        # config.DECISION_DATE, NOT datetime.now()/today — otherwise the
+        # age component (and InjuryRiskScore) would silently drift every
+        # day the script is re-run.
         df = _df(_base_row())
-        result = compute_injury_risk(df)  # no reference_date passed
-        assert not result.df["InjuryRiskScore"].isna().any()
+        result_default = compute_injury_risk(df)  # no reference_date passed
+        result_explicit = compute_injury_risk(df, reference_date=config.DECISION_DATE)
+        assert not result_default.df["InjuryRiskScore"].isna().any()
+        assert (
+            result_default.df["injury_risk_age_component"].iloc[0]
+            == result_explicit.df["injury_risk_age_component"].iloc[0]
+        )

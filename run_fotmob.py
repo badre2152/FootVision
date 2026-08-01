@@ -31,11 +31,24 @@ def parse_args():
     p.add_argument("--pid",     nargs="+", default=None,  help="Specific player IDs")
     p.add_argument("--seed",    default="seeds/players_49.csv")
     p.add_argument("--dry-run", action="store_true", help="Skip MinIO upload")
+    p.add_argument(
+        "--as-of", default=None,
+        help=(
+            "YYYY-MM-DD decision-date cutoff (config.DECISION_DATE by default). "
+            "NOTE: Fotmob loader reads a fixed TARGET_SEASON string "
+            "('2025/2026', see fotmob_loader.py), not a datetime.now()-relative "
+            "window, so it is not currently affected by real-time leakage. This "
+            "flag is accepted for CLI consistency (01_temporal_cutoff.md req. #3) "
+            "and logged only."
+        ),
+    )
     return p.parse_args()
 
 
 def main():
     args     = parse_args()
+    from config import DECISION_DATE
+    as_of    = args.as_of or DECISION_DATE.isoformat()
     run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     from ingestion.loaders.fotmob_loader import run_fotmob_loader, FOTMOB_IDS
@@ -46,7 +59,7 @@ def main():
         target_pids = target_pids[:args.limit]
 
     logger.info("=" * 60)
-    logger.info("Fotmob Bronze Loader — run_date: %s", run_date)
+    logger.info("Fotmob Bronze Loader — run_date: %s | as-of: %s", run_date, as_of)
     logger.info("targets  : %d players", len(target_pids))
     logger.info("dry-run  : %s", args.dry_run)
     logger.info("=" * 60)

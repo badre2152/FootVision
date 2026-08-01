@@ -8,9 +8,13 @@
 #   python diagnose_clubelo_coverage.py
 
 from ingestion.loaders.clubelo_loader import _fetch_clubelo_csv
-from datetime import date
+from config import DECISION_DATE
 
-rows = _fetch_clubelo_csv(date.today().isoformat())
+# TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): diagnose coverage against the
+# SAME snapshot date the live pipeline actually uses (DECISION_DATE), not
+# today — otherwise a "missing club" finding here may not even apply to the
+# date the Gold pipeline queries.
+rows = _fetch_clubelo_csv(DECISION_DATE.isoformat())
 if not rows:
     print("No data fetched at all — check network/date fallback.")
     raise SystemExit(1)

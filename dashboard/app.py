@@ -6,6 +6,9 @@
 # Reads the latest Gold output from gold/ (see data_loader.py). If you
 # haven't run run_gold.py yet, this shows a clear "no data" message
 # instead of crashing.
+#
+# Localized (issue #15) — all static text goes through dashboard/i18n.py's
+# t() helper so it follows the sidebar language switcher (EN/FR/AR).
 
 import sys
 from pathlib import Path
@@ -22,6 +25,7 @@ from dashboard.data_loader import (
     load_latest_squad_summary,
 )
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.i18n import t
 
 st.set_page_config(
     page_title="Football Atlas — Executive Dashboard",
@@ -31,36 +35,37 @@ st.set_page_config(
 
 render_sidebar()
 
-st.title("⚽ Football Atlas — Executive Dashboard")
-st.caption("Decision Support System — Morocco World Cup 2026 squad selection")
+st.title(t("nav.app_title"))
+st.caption(t("app.caption"))
 
 top26   = load_latest_top26()
 players = load_latest_players_scored()
 summary = load_latest_squad_summary()
 
 if top26 is None or players is None or summary is None:
-    st.error(
-        "No Gold output found in `gold/`. Run the pipeline first:\n\n"
-        "```bash\npython run_bronze.py\npython run_silver.py\npython run_gold.py --top-n 26\n```"
-    )
+    st.error(t("app.no_gold_error"))
     st.stop()
 
-st.caption(f"Data source: `{summary.get('_source_file', 'unknown')}` — generated {summary.get('generated_at', 'unknown')}")
+st.caption(t(
+    "app.source_caption",
+    source=summary.get('_source_file', 'unknown'),
+    generated_at=summary.get('generated_at', 'unknown'),
+))
 
 # ── KPI row ───────────────────────────────────────────────────────────────
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Candidates tracked", summary.get("total_candidates", len(players)))
-col2.metric("Squad size", summary.get("squad_size", len(top26)))
+col1.metric(t("app.kpi_candidates"), summary.get("total_candidates", len(players)))
+col2.metric(t("app.kpi_squad_size"), summary.get("squad_size", len(top26)))
 top_player = summary.get("top_player", {})
-col3.metric("Top player", top_player.get("name", "—"), f"DSS={top_player.get('score', 0):.4f}")
+col3.metric(t("app.kpi_top_player"), top_player.get("name", "—"), f"DSS={top_player.get('score', 0):.4f}")
 
 score_range = summary.get("score_range")
 if score_range:
-    col4.metric("DSS range (all 49)", f"{score_range['min']:.3f} – {score_range['max']:.3f}")
+    col4.metric(t("app.kpi_dss_range"), f"{score_range['min']:.3f} – {score_range['max']:.3f}")
 else:
     # Older squad_summary.json (pre-2026-07-14) doesn't have score_range —
     # compute it on the fly rather than hiding the metric entirely.
-    col4.metric("DSS range (all 49)", f"{players['DSSScore'].min():.3f} – {players['DSSScore'].max():.3f}")
+    col4.metric(t("app.kpi_dss_range"), f"{players['DSSScore'].min():.3f} – {players['DSSScore'].max():.3f}")
 
 st.divider()
 
@@ -68,7 +73,7 @@ st.divider()
 left, right = st.columns([1, 2])
 
 with left:
-    st.subheader("Position breakdown")
+    st.subheader(t("app.position_breakdown"))
     position_counts = summary.get("position_counts")
     if position_counts is None:
         # Older squad_summary.json — derive it from position_breakdown lists instead
@@ -87,38 +92,34 @@ with left:
         if position_counts.get(pos, 0) != cap
     ]
     if mismatches:
-        st.warning(
-            "Position counts don't match the standard 3/9/9/5 cap — "
-            "if this squad_summary.json predates 2026-07-14, it may have "
-            "the position-cap bug (see AUDIT_AND_FIXES / MASTER_SPEC "
-            "addendum): " + "; ".join(mismatches)
-        )
+        st.warning(t("app.position_mismatch_warning", mismatches="; ".join(mismatches)))
 
 with right:
-    st.subheader("⚠️ Flags")
+    st.subheader(t("app.flags_header"))
     flags = summary.get("flags", {})
     if flags.get("high_injury_risk"):
-        st.markdown(f"**High injury risk ({len(flags['high_injury_risk'])}):** " + ", ".join(flags["high_injury_risk"]))
+        st.markdown(f"**{t('app.flag_injury', n=len(flags['high_injury_risk']))}** " + ", ".join(flags["high_injury_risk"]))
     if flags.get("limited_data"):
-        st.markdown(f"**Limited data coverage ({len(flags['limited_data'])}):** " + ", ".join(flags["limited_data"]))
+        st.markdown(f"**{t('app.flag_limited_data', n=len(flags['limited_data']))}** " + ", ".join(flags["limited_data"]))
     if flags.get("intl_caps_possibly_missing"):
-        st.markdown(f"**Intl caps possibly missing ({len(flags['intl_caps_possibly_missing'])}):** " + ", ".join(flags["intl_caps_possibly_missing"]))
+        st.markdown(f"**{t('app.flag_intl_caps', n=len(flags['intl_caps_possibly_missing']))}** " + ", ".join(flags["intl_caps_possibly_missing"]))
     if not any(flags.values()):
-        st.markdown("No flags raised for this squad.")
+        st.markdown(t("app.no_flags"))
 
     pct_summary = summary.get("percentile_summary")
     if pct_summary:
-        st.subheader("Score spread (display scaling)")
-        st.markdown(
-            f"Elite-to-fringe gap: **{pct_summary['elite_fringe_gap_original']:.3f}** (raw DSS) "
-            f"→ **{pct_summary['elite_fringe_gap_percentile']:.3f}** (display-scaled, ×{pct_summary['expansion_factor']:.2f}). "
-            "See `DSSScore_pct` in the table below — ranking is identical, only the visual spread is stretched."
-        )
+        st.subheader(t("app.score_spread_header"))
+        st.markdown(t(
+            "app.score_spread_text",
+            gap_raw=f"{pct_summary['elite_fringe_gap_original']:.3f}",
+            gap_pct=f"{pct_summary['elite_fringe_gap_percentile']:.3f}",
+            factor=f"{pct_summary['expansion_factor']:.2f}",
+        ))
 
 st.divider()
 
 # ── Full squad table ─────────────────────────────────────────────────────
-st.subheader(f"Squad — top {len(top26)}")
+st.subheader(t("app.squad_table_header", n=len(top26)))
 top26_filtered = apply_sidebar_filters(top26)
 display_cols = [c for c in [
     "Rank", "player_name", "position", "club", "league",
@@ -128,7 +129,7 @@ display_cols = [c for c in [
 ] if c in top26_filtered.columns]
 
 if top26_filtered.empty:
-    st.info("No players match the current sidebar filters.")
+    st.info(t("app.no_match_filters"))
 else:
     st.dataframe(
         top26_filtered[display_cols].style.background_gradient(subset=["DSSScore"], cmap="RdYlGn"),
@@ -138,9 +139,6 @@ else:
 
 missing_new_cols = [c for c in ["ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore", "DSSScore_pct"] if c not in top26.columns]
 if missing_new_cols:
-    st.caption(
-        f"ℹ️ This run predates the 2026-07-14 session — {', '.join(missing_new_cols)} "
-        "not present. Re-run `run_gold.py` with the updated code to see them."
-    )
+    st.caption(t("app.missing_cols_caption", cols=", ".join(missing_new_cols)))
 
-st.caption("👈 Use the sidebar to open **Player Analysis**, **Chemistry Matrix**, and **Final Squad** pages.")
+st.caption(t("app.footer_hint"))

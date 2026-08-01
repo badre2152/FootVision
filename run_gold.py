@@ -41,7 +41,10 @@ from analytics.scoring.performance_score import (
 )
 from analytics.scoring.chemistry_score import compute_chemistry_score      # NEW 2026-07-14
 from analytics.scoring.pressure_index import compute_pressure_index        # NEW 2026-07-14
-from analytics.scoring.flexibility_score import compute_flexibility_score  # NEW 2026-07-14 (UNTESTED upstream — see module docstring)
+from analytics.scoring.flexibility_score import (
+    compute_flexibility_score,       # NEW 2026-07-14 (UNTESTED upstream — see module docstring)
+    secondary_position_groups,       # NEW 2026-08-01 (spec #13) — TM label -> GK/DEF/MID/FWD
+)
 from analytics.scoring.sentiment_score import compute_sentiment_score      # NEW 2026-07-22 (UNTESTED end-to-end — see module docstring)
 from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary  # WIRED IN 2026-07-14 (was orphaned)
 from analytics.ml.player_clustering import cluster_players  # NEW 2026-07-29 — ML layer, see module docstring
@@ -105,6 +108,36 @@ def parse_args() -> argparse.Namespace:
         help="Force this many Player DNA clusters instead of auto-selecting "
              "via silhouette score over k=3..6 (see run_player_dna.py --k).",
     )
+    p.add_argument(
+        "--no-flexibility-tiebreak", action="store_true",
+        help=(
+            "Disable the spec #13 flexibility-aware tiebreak in "
+            "select_squad_with_position_cap() — falls back to pure DSSScore "
+            "rank order for every slot, including near-ties. Useful for "
+            "comparing squads with/without the tiebreak, or if "
+            "tm_secondary_positions data is suspect for this run."
+        ),
+    )
+    p.add_argument(
+        "--flex-tiebreak-threshold", type=float, default=0.01,
+        help=(
+            "DSSScore gap (default 0.01) at or below which two candidates "
+            "for a position group's last cap slot are considered 'close "
+            "enough' for the spec #13 flexibility tiebreak to apply. This is "
+            "a product-owner-tunable margin, not a hardcoded constant — see "
+            "13_flexibility_in_selection_logic.md's Implementation Plan #1."
+        ),
+    )
+    p.add_argument(
+        "--depth-chart-surplus-threshold", type=int, default=3,
+        help=(
+            "A position group is treated as 'understaffed relative to its "
+            "depth chart' (spec #13) when it has this many or fewer spare "
+            "candidates above its hard cap in the full candidate pool "
+            "(e.g. MID with 11 candidates for a cap of 9 has a surplus of "
+            "only 2). Default 3."
+        ),
+    )
     return p.parse_args()
 
 
@@ -122,6 +155,9 @@ def select_squad_with_position_cap(
     df: pd.DataFrame,
     top_n: int = 26,
     position_caps: dict | None = None,
+    use_flexibility_tiebreak: bool = True,
+    flex_tiebreak_threshold: float = 0.01,
+    depth_chart_surplus_threshold: int = 3,
 ) -> pd.DataFrame:
     """
     Selects top-N players with realistic position caps.
@@ -136,38 +172,173 @@ def select_squad_with_position_cap(
         MID = 9  (maximum)
         FWD = 5  (minimum: 3 starters + 2 backups)
 
-    Algorithm: greedy — iterate by DSSScore rank, add player if position cap not hit.
-    After filling all caps: fill remaining slots from best remaining regardless of position.
+    Algorithm: greedy, per position group — take the top `caps[pos]` players of
+    each group by DSSScore (equivalent to the old single-pass-by-global-Rank
+    walk, since Rank is itself a DSSScore-descending rank — see
+    analytics/scoring/performance_score.py). After all groups are filled:
+    fill remaining slots from the best leftover players regardless of position.
+
+    NEW 2026-08-01 (spec #13, 13_flexibility_in_selection_logic.md):
+    -------------------------------------------------------------------------
+    Before this, `FlexibilityScore` / `tm_secondary_positions` only nudged
+    DSSScore slightly — they had ZERO effect on which players actually filled
+    the position-capped squad, which is exactly where real positional
+    flexibility matters (covering an injury/suspension without burning a
+    full extra roster slot).
+
+    When `use_flexibility_tiebreak=True` (default), for each position group's
+    LAST cap slot, if the incumbent (last player who'd normally make the cut)
+    and one or more challengers (best players just outside the cap) are within
+    `flex_tiebreak_threshold` DSSScore of each other, a challenger is preferred
+    over the incumbent IF the challenger — and not the incumbent — has
+    documented secondary-position coverage (`tm_secondary_positions`, mapped
+    via analytics.scoring.flexibility_score.secondary_position_groups()) for
+    another position group that is "understaffed relative to its depth
+    chart".
+
+    "Understaffed relative to depth chart" here means: that position group
+    has `depth_chart_surplus_threshold` or fewer spare candidates above its
+    hard cap in the full candidate pool (e.g. MID with 11 total candidates
+    for a cap of 9 has a surplus of only 2 — thin bench cushion vs. FWD's
+    16-for-5). This repo does not yet implement spec #10's fuller per-
+    position depth chart, so this candidate-pool surplus is the closest
+    available proxy; if/when spec #10 lands, this should read its actual
+    depth-chart output instead (see that spec).
+
+    This NEVER changes the hard per-position totals (`caps` stay exact) — it
+    only changes WHICH player occupies a borderline slot, and only when it
+    would actually change the outcome. Every swap is logged via `logger.info`
+    and recorded in the returned `selection_reason` column (empty string for
+    everyone else) so it's visible in `top26.csv` and `4_final_squad.py`, not
+    a silent internal tiebreak.
 
     Args:
-        df:             Full 49-player ranked DataFrame (must have Rank + position cols).
-        top_n:          Target squad size (default 26).
-        position_caps:  Override default caps per position.
+        df:                              Full ranked DataFrame (must have Rank
+                                          + position cols; tm_secondary_positions
+                                          optional — treated as "no flexibility"
+                                          if missing).
+        top_n:                           Target squad size (default 26).
+        position_caps:                   Override default caps per position.
+        use_flexibility_tiebreak:        Set False to fall back to pure
+                                          DSSScore order (old behavior).
+        flex_tiebreak_threshold:         Max DSSScore gap to count as a "close
+                                          enough" tie (default 0.01 — see spec
+                                          #13's Implementation Plan #1; this is
+                                          a product decision, tune as needed).
+        depth_chart_surplus_threshold:   Candidate-pool surplus at/below which
+                                          a position group counts as thin
+                                          (default 3).
 
     Returns:
-        DataFrame of top_n selected players, sorted by DSSScore.
+        DataFrame of top_n selected players, sorted by DSSScore, with an
+        added `selection_reason` column (non-empty only for flexibility-tiebreak
+        swaps).
     """
     caps = position_caps or {"GK": 3, "DEF": 9, "MID": 9, "FWD": 5}
-    counts = {pos: 0 for pos in caps}
 
-    selected = []
-    remaining = []
+    # ── Determine which position groups are "understaffed relative to depth
+    #    chart" — see docstring above for what that means in this codebase. ──
+    understaffed_positions = set()
+    if use_flexibility_tiebreak:
+        candidate_counts = df["position"].value_counts().to_dict()
+        for pos, cap in caps.items():
+            surplus = candidate_counts.get(pos, 0) - cap
+            if surplus <= depth_chart_surplus_threshold:
+                understaffed_positions.add(pos)
+        if understaffed_positions:
+            logger.info(
+                "Flexibility tiebreak ENABLED — position groups with thin "
+                "depth-chart surplus (<=%d spare candidates above cap): %s",
+                depth_chart_surplus_threshold, sorted(understaffed_positions),
+            )
 
-    for _, row in df.sort_values("Rank").iterrows():
-        pos = row["position"]
-        if pos in caps and counts.get(pos, 0) < caps[pos]:
-            selected.append(row)
-            counts[pos] = counts.get(pos, 0) + 1
-        else:
-            remaining.append(row)
+    selected_parts = []
+    remaining_parts = []
+    selection_reasons: dict = {}   # player_id -> human-readable reason string
 
-    # Fill remaining slots from best remaining players
-    slots_left = top_n - len(selected)
-    if slots_left > 0 and remaining:
-        selected.extend(remaining[:slots_left])
+    for pos, cap in caps.items():
+        pos_df = df[df["position"] == pos].sort_values("DSSScore", ascending=False)
+        pos_selected = pos_df.iloc[:cap].copy()
+        pos_overflow = pos_df.iloc[cap:].copy()
 
-    squad_df = pd.DataFrame(selected).sort_values("DSSScore", ascending=False).reset_index(drop=True)
+        # Tiebreak only makes sense if the group is actually at its cap (i.e.
+        # there IS a "last slot" being contested) and there's at least one
+        # challenger just outside it.
+        if use_flexibility_tiebreak and len(pos_selected) == cap and cap > 0 and not pos_overflow.empty:
+            incumbent_row = pos_selected.iloc[[-1]]
+            incumbent = incumbent_row.iloc[0]
+
+            # Near-tie band: every overflow candidate within threshold of the
+            # incumbent's DSSScore (covers "last slot(s)", plural, per spec).
+            tie_band = pos_overflow[
+                (incumbent["DSSScore"] - pos_overflow["DSSScore"]) <= flex_tiebreak_threshold
+            ]
+
+            incumbent_flex = secondary_position_groups(
+                incumbent.get("tm_secondary_positions")
+            ) & understaffed_positions - {pos}
+
+            flexible_challengers = []
+            for idx, cand in tie_band.iterrows():
+                cand_flex = secondary_position_groups(
+                    cand.get("tm_secondary_positions")
+                ) & understaffed_positions - {pos}
+                if cand_flex:
+                    flexible_challengers.append((idx, cand, cand_flex))
+
+            # Only swap if the incumbent has NO qualifying flexibility of its
+            # own — otherwise there's nothing to gain by swapping.
+            if flexible_challengers and not incumbent_flex:
+                # Prefer the highest-DSSScore flexible challenger among ties.
+                best_idx, challenger, challenger_flex = max(
+                    flexible_challengers, key=lambda t: t[1]["DSSScore"]
+                )
+                score_gap = incumbent["DSSScore"] - challenger["DSSScore"]
+                reason = (
+                    f"Selected over {incumbent['player_name']} for the last "
+                    f"{pos} slot (DSSScore gap {score_gap:.4f} <= "
+                    f"{flex_tiebreak_threshold}) — covers "
+                    f"{'/'.join(sorted(challenger_flex))} as secondary "
+                    f"position(s), which {'is' if len(challenger_flex) == 1 else 'are'} "
+                    f"thin on depth-chart surplus (<= {depth_chart_surplus_threshold} "
+                    f"spare candidates above cap)."
+                )
+                logger.info("Flexibility tiebreak: %s", reason)
+                if "player_id" in challenger:
+                    selection_reasons[challenger["player_id"]] = reason
+
+                challenger_row = pos_overflow.loc[[best_idx]]
+                pos_selected = pd.concat([pos_selected.iloc[:-1], challenger_row])
+                pos_overflow = pd.concat(
+                    [incumbent_row, pos_overflow.drop(index=best_idx)]
+                )
+
+        selected_parts.append(pos_selected)
+        remaining_parts.append(pos_overflow)
+
+    selected_df = (
+        pd.concat(selected_parts, ignore_index=False) if selected_parts else df.iloc[0:0]
+    )
+    remaining_df = (
+        pd.concat(remaining_parts, ignore_index=False) if remaining_parts else df.iloc[0:0]
+    )
+
+    # Fill remaining slots from best remaining players, regardless of position
+    # (unchanged from the old behavior — remaining_df re-sorted by DSSScore
+    # since it's now assembled per-position-group rather than in one global pass).
+    slots_left = top_n - len(selected_df)
+    if slots_left > 0 and not remaining_df.empty:
+        remaining_df = remaining_df.sort_values("DSSScore", ascending=False)
+        selected_df = pd.concat([selected_df, remaining_df.iloc[:slots_left]])
+
+    squad_df = selected_df.sort_values("DSSScore", ascending=False).reset_index(drop=True)
     squad_df.insert(0, "SquadRank", range(1, len(squad_df) + 1))
+
+    if "player_id" in squad_df.columns:
+        squad_df["selection_reason"] = squad_df["player_id"].map(selection_reasons).fillna("")
+    else:
+        squad_df["selection_reason"] = ""
+
     return squad_df
 
 
@@ -211,6 +382,18 @@ def build_squad_summary(squad_df: pd.DataFrame, all_df: pd.DataFrame, top_n: int
 
     top_row = squad_df.loc[squad_df["DSSScore"].idxmax()]
 
+    # NEW 2026-08-01 (spec #13) — surface any flexibility-tiebreak swaps
+    # explicitly in the summary, so they're visible to the coach, not just a
+    # silent internal tiebreak buried in a per-player column.
+    flexibility_tiebreaks = []
+    if "selection_reason" in squad_df.columns:
+        flagged = squad_df[squad_df["selection_reason"].fillna("") != ""]
+        flexibility_tiebreaks = [
+            {"player_name": row["player_name"], "position": row.get("position", ""),
+             "reason": row["selection_reason"]}
+            for _, row in flagged.iterrows()
+        ]
+
     return {
         "generated_at":       datetime.now().isoformat(),
         "total_candidates":   len(all_df),
@@ -218,6 +401,7 @@ def build_squad_summary(squad_df: pd.DataFrame, all_df: pd.DataFrame, top_n: int
         "squad_size_target":  top_n,
         "position_breakdown": position_counts,
         "position_counts":    position_size,          # e.g. {"GK": 3, "DEF": 9, "MID": 9, "FWD": 5}
+        "flexibility_tiebreaks": flexibility_tiebreaks,  # NEW 2026-08-01 (spec #13)
         "flags": {
             "high_injury_risk":           high_risk,
             "limited_data":               no_fbref,
@@ -408,14 +592,20 @@ def main() -> None:
     upload_gold_to_minio(full_path, full_path.name)
 
     # Top-N squad recommendation — position-capped
-    squad_df = select_squad_with_position_cap(df, top_n=args.top_n)
+    squad_df = select_squad_with_position_cap(
+        df,
+        top_n=args.top_n,
+        use_flexibility_tiebreak=not args.no_flexibility_tiebreak,
+        flex_tiebreak_threshold=args.flex_tiebreak_threshold,
+        depth_chart_surplus_threshold=args.depth_chart_surplus_threshold,
+    )
     top_df   = squad_df
     top_cols = [
         "Rank", "player_id", "player_name", "position", "club", "league",
         "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
         "MentalScore", "AvailabilityScore", "InternationalScore",
         "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
-        "PlayerDNA",
+        "PlayerDNA", "selection_reason",  # NEW 2026-08-01 (spec #13)
     ]
     top_cols = [c for c in top_cols if c in top_df.columns]
     top_path = output_dir / f"top{args.top_n}_{run_date}.csv"

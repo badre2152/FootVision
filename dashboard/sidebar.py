@@ -9,25 +9,36 @@
 # Filter state lives in st.session_state so it persists as the user moves
 # between pages (Streamlit reruns the whole script on every interaction,
 # but session_state survives across those reruns within one browser tab).
+#
+# Localization (issue #15, added later): the language switcher lives here
+# too, using the same session_state persistence pattern as the filters —
+# it's rendered first so the rest of the sidebar (and RTL CSS, for Arabic)
+# reflects the choice on the same run. See dashboard/i18n.py.
 
 import streamlit as st
+
+from dashboard.i18n import t, render_language_switcher
 
 POSITIONS = ["GK", "DEF", "MID", "FWD"]
 
 
 def render_sidebar() -> None:
     """
-    Renders branding + global filters in the sidebar. Call this once near
-    the top of every page file (app.py and each dashboard/pages/*.py).
+    Renders branding + language switcher + global filters in the sidebar.
+    Call this once near the top of every page file (app.py and each
+    dashboard/pages/*.py).
     """
     with st.sidebar:
+        render_language_switcher()
+        st.divider()
+
         st.markdown(
-            """
+            f"""
             <div style="text-align:center; padding: 0.5rem 0 1rem 0;">
                 <span style="font-size:2.2rem;">⚽🇲🇦</span>
-                <h2 style="margin:0.2rem 0 0 0;">Football Atlas</h2>
+                <h2 style="margin:0.2rem 0 0 0;">{t("sidebar.brand_title")}</h2>
                 <p style="color:#9ca3af; font-size:0.85rem; margin:0;">
-                    Morocco World Cup 2026 — Decision Support System
+                    {t("sidebar.brand_subtitle")}
                 </p>
             </div>
             """,
@@ -35,35 +46,31 @@ def render_sidebar() -> None:
         )
         st.divider()
 
-        st.subheader("🔍 Filters")
+        st.subheader(t("sidebar.filters_header"))
 
         st.session_state.setdefault("filter_positions", list(POSITIONS))
         st.session_state.setdefault("filter_search", "")
 
         st.session_state["filter_positions"] = st.multiselect(
-            "Position",
+            t("sidebar.position_label"),
             options=POSITIONS,
             default=st.session_state["filter_positions"],
             key="sidebar_position_filter",
         )
         st.session_state["filter_search"] = st.text_input(
-            "Search player name",
+            t("sidebar.search_label"),
             value=st.session_state["filter_search"],
-            placeholder="e.g. Hakimi",
+            placeholder=t("sidebar.search_placeholder"),
             key="sidebar_search_box",
         )
 
-        if st.button("Reset filters", width='stretch'):
+        if st.button(t("sidebar.reset_button"), width='stretch'):
             st.session_state["filter_positions"] = list(POSITIONS)
             st.session_state["filter_search"] = ""
             st.rerun()
 
         st.divider()
-        st.caption(
-            "Built for the Football Atlas graduation project. "
-            "Data: FBref, Understat, SofaScore, StatsBomb Open Data, "
-            "Transfermarkt, FlashScore, Fotmob, SoFIFA, Wikidata."
-        )
+        st.caption(t("sidebar.footer"))
 
 
 def apply_sidebar_filters(df):

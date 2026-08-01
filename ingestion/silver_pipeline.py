@@ -186,6 +186,16 @@ def join_chemistry_pairs(df: pd.DataFrame) -> pd.DataFrame:
                              "combines well with others" signal)
         chem_num_partners — how many candidates they have chemistry data
                              with (context — not itself scored)
+        chem_is_real      — True if THIS player had a real (non-imputed)
+                             chem_avg_per90 BEFORE position-median
+                             imputation runs below. Added 2026-08-01 (see
+                             19_chemistry_transparency.md) — chem_num_partners
+                             already implied this (>0 == real), but there was
+                             no explicit provenance flag surviving to Gold,
+                             unlike sb_mental_data_real/ga_imputed_flag
+                             elsewhere in this file. Must be captured HERE,
+                             before impute_by_position() overwrites the NaNs,
+                             same pattern as those two flags.
 
     Only the 11/49 candidates covered by StatsBomb open data (WC2018/2022 +
     AFCON2023) get real values here. The rest are NaN and get imputed by
@@ -205,6 +215,7 @@ def join_chemistry_pairs(df: pd.DataFrame) -> pd.DataFrame:
         logger.warning("chemistry_pairs Bronze source empty/missing — chem_avg_per90 will be all-NaN before imputation.")
         df["chem_avg_per90"]    = np.nan
         df["chem_num_partners"] = 0
+        df["chem_is_real"]      = False
         return df
 
     pairs_df = pd.DataFrame(records)
@@ -222,9 +233,17 @@ def join_chemistry_pairs(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.merge(per_player, on="player_name", how="left")
     df["chem_num_partners"] = df["chem_num_partners"].fillna(0).astype(int)
+
+    # Capture provenance BEFORE impute_by_position() fills the NaNs below —
+    # this is the ONLY point in the pipeline where "real StatsBomb pairwise
+    # data" and "position-group median fallback" are still distinguishable.
+    df["chem_is_real"] = df["chem_avg_per90"].notna()
+
+    real_count = int(df["chem_is_real"].sum())
     logger.info(
-        "Chemistry pairs joined: %d/%d players have real chem_avg_per90 (from %d pairs)",
-        df["chem_avg_per90"].notna().sum(), len(df), len(pairs_df),
+        "Chemistry pairs joined: %d/%d players have real chem_avg_per90 (from %d pairs) "
+        "— chem_is_real flag set for downstream Gold/dashboard transparency.",
+        real_count, len(df), len(pairs_df),
     )
     return df
 

@@ -84,3 +84,61 @@ def compute_flexibility_score(df: pd.DataFrame) -> pd.DataFrame:
             "untested Transfermarkt selector never matched. Verify before use."
         )
     return df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADDED for spec #13 (flexibility_in_selection_logic.md) — 2026-08-01
+#
+# tm_secondary_positions holds raw Transfermarkt labels (e.g. "Right Midfield,
+# Left-Back" — see transfermarkt_loader.py::_extract_secondary_positions()),
+# NOT this project's coarse GK/DEF/MID/FWD groups used everywhere else
+# (position_caps, the `position` column, etc). Squad-selection logic needs to
+# know which coarse GROUP a secondary position falls into (e.g. "Left-Back"
+# -> "DEF") to decide whether a player's flexibility actually covers a thin
+# position group. This mapping is the missing link between the two.
+#
+# Mapping follows Transfermarkt's standard position taxonomy. Any label not
+# in this table (e.g. a future TM wording change) is skipped rather than
+# guessed at — see secondary_position_groups() below.
+TM_POSITION_TO_GROUP = {
+    "Goalkeeper": "GK",
+    "Centre-Back": "DEF", "Right-Back": "DEF", "Left-Back": "DEF", "Sweeper": "DEF",
+    "Defensive Midfield": "MID", "Central Midfield": "MID",
+    "Right Midfield": "MID", "Left Midfield": "MID", "Attacking Midfield": "MID",
+    "Right Winger": "FWD", "Left Winger": "FWD",
+    "Second Striker": "FWD", "Centre-Forward": "FWD",
+}
+
+
+def secondary_position_groups(tm_secondary_positions) -> set:
+    """
+    Parses a player's raw tm_secondary_positions string (comma-joined TM
+    labels, e.g. "Right Midfield, Left-Back") into this project's coarse
+    position groups (e.g. {"MID", "DEF"}).
+
+    Returns an empty set for NaN/None/empty input, or if none of the listed
+    labels are recognized. Unrecognized labels are logged at debug level and
+    otherwise silently skipped — a single unmapped label should never crash
+    or silently distort squad selection.
+    """
+    if tm_secondary_positions is None:
+        return set()
+    if isinstance(tm_secondary_positions, float) and pd.isna(tm_secondary_positions):
+        return set()
+    if not isinstance(tm_secondary_positions, str) or not tm_secondary_positions.strip():
+        return set()
+
+    groups = set()
+    for raw_label in tm_secondary_positions.split(","):
+        label = raw_label.strip()
+        if not label:
+            continue
+        group = TM_POSITION_TO_GROUP.get(label)
+        if group:
+            groups.add(group)
+        else:
+            logger.debug(
+                "secondary_position_groups: unrecognized TM position label %r "
+                "— skipped (no effect on selection).", label,
+            )
+    return groups

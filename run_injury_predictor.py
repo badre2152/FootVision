@@ -25,6 +25,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
+import config
 from analytics.ml.injury_predictor import compute_injury_risk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -36,7 +37,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--input", default=None, help="Defaults to most recent gold/players_scored_*.csv")
     p.add_argument(
         "--reference-date", default=None,
-        help="YYYY-MM-DD to compute age as-of (e.g. a squad-announcement date). Defaults to today.",
+        help=(
+            "YYYY-MM-DD to compute age as-of (e.g. a squad-announcement date). "
+            f"Defaults to config.DECISION_DATE ({config.DECISION_DATE.isoformat()}), "
+            "NOT today's date (spec #4 fix — see analytics/ml/injury_predictor.py)."
+        ),
     )
     p.add_argument("--outdir", default="gold")
     return p.parse_args()
@@ -52,9 +57,10 @@ def _latest_scored_csv() -> str:
 def main() -> None:
     args = parse_args()
     input_path = args.input or _latest_scored_csv()
-    ref_date = date.fromisoformat(args.reference_date) if args.reference_date else None
+    ref_date = date.fromisoformat(args.reference_date) if args.reference_date else config.DECISION_DATE
 
     logger.info("Reading %s", input_path)
+    logger.info("Using reference_date=%s", ref_date.isoformat())
     df = pd.read_csv(input_path)
 
     result = compute_injury_risk(df, reference_date=ref_date)
@@ -93,7 +99,7 @@ def main() -> None:
     summary = {
         "generated_at": datetime.now().isoformat(),
         "source_file": input_path,
-        "reference_date": args.reference_date or date.today().isoformat(),
+        "reference_date": ref_date.isoformat(),
         "n_players": result.n_players,
         "n_low_confidence": result.n_low_confidence,
         "level_counts": result.level_counts,

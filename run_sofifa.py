@@ -205,6 +205,37 @@ def mental_score(attrs: dict, pos: str) -> float | None:
     return round(raw * DISCOUNT + med * (1 - DISCOUNT), 4)
 
 
+def build_minio_upload_payload(results: list[dict]) -> list[dict]:
+    """
+    Returns the exact object this loader uploads to MinIO under the
+    `sofifa/` Bronze prefix.
+
+    REGRESSION GUARD (see 03_regression_protection.md / CHANGELOG.md):
+    This MUST be a flat list of per-player dicts — the same convention
+    every other Bronze loader uses (wikidata_loader, fbref_loader,
+    fotmob via run_fotmob.py, etc: `upload_json(BUCKET, name, records)`).
+
+    This upload was previously wrapped as {"run_date": ..., "players":
+    results} for local-file readability, then that SAME wrapped shape
+    was (incorrectly) also used for the MinIO upload. The Silver join
+    (ingestion/silver_pipeline.py::join_all_bronze_sources -> _read())
+    does `pd.DataFrame(read_latest_json(...))`: given a flat list this
+    produces one row per player with a `player_id` column; given the
+    wrapped dict it instead produces a DataFrame from the dict's top-level
+    keys ("run_date", "players") — no `player_id` column exists, so
+    `_read()` returns None, the merge is silently skipped, and every
+    `sofifa_*` column is dropped (0/49 coverage) with NO exception raised
+    anywhere in the pipeline. Confirmed as the direct cause of that
+    exact zero-coverage symptom.
+
+    Kept as its own function (rather than inlined at the call site) so
+    tests/test_regression_protection.py::TestSofifaUploadFormat can
+    assert on this shape directly without driving a real Playwright
+    browser through Cloudflare.
+    """
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None)
@@ -214,11 +245,24 @@ def main():
     parser.add_argument("--seed", default="seeds/players_49.csv")
     parser.add_argument("--headless", action="store_true",
                          help="خدم بلا نافذة ظاهرة (Cloudflare كيكتشفو غالبا، ماشي موصى بيه)")
+    parser.add_argument(
+        "--as-of", default=None,
+        help=(
+            "YYYY-MM-DD decision-date cutoff (config.DECISION_DATE by default). "
+            "NOTE: SoFIFA loader currently has no date-relative filtering logic "
+            "(ratings are point-in-time snapshots, not a lookback window) — this "
+            "flag is accepted for CLI consistency across Bronze entrypoints "
+            "(01_temporal_cutoff.md req. #3) and logged, but does not yet change "
+            "loader behavior. Revisit if SoFIFA ever adds season-history scraping."
+        ),
+    )
     args = parser.parse_args()
 
+    from config import DECISION_DATE
+    as_of = args.as_of or DECISION_DATE.isoformat()
     run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
     logger.info("=" * 60)
-    logger.info("SoFIFA Bronze Loader (Playwright) — run_date: %s", run_date)
+    logger.info("SoFIFA Bronze Loader (Playwright) — run_date: %s | as-of: %s", run_date, as_of)
     logger.info("targets: %d sofifa IDs configured", len(SOFIFA_IDS))
     logger.info("=" * 60)
 
@@ -291,10 +335,17 @@ def main():
     out_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     logger.info("Saved locally → %s", out_file)
 
-    # MinIO
+    # MinIO — MUST be the flat records list (build_minio_upload_payload),
+    # NOT the local-file `payload` wrapper above. See that function's
+    # docstring: uploading `payload` here silently zeroes out every
+    # sofifa_* column downstream in Silver, with no exception raised.
     try:
         from clients.minio_client import upload_json
-        upload_json("football-bronze", f"sofifa/players_sofifa_{run_date}.json", payload)
+        upload_json(
+            "football-bronze",
+            f"sofifa/players_sofifa_{run_date}.json",
+            build_minio_upload_payload(results),
+        )
         logger.info("Uploaded → s3://football-bronze/sofifa/players_sofifa_%s.json", run_date)
     except Exception as e:
         logger.warning("MinIO upload skipped: %s", e)

@@ -7,6 +7,7 @@ lxml
 
 # ── Browser automation ────────────────────────────────────────────────────────
 playwright
+playwright-stealth          # ← مضافة (مطلوبة فـ run_sofifa.py، كانت ناقصة تماماً)
 selenium                    # ← مضافة (مطلوبة في sofascore_detail_loader.py)
 undetected_chromedriver
 

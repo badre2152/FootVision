@@ -185,7 +185,13 @@ def load_clubelo_bronze(
     from clients.minio_client import upload_json
 
     if run_date is None:
-        run_date = date.today().isoformat()
+        # TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): the ClubElo snapshot
+        # date IS the data-filtering axis here (it selects which day's Elo
+        # ratings to fetch), so it must default to config.DECISION_DATE —
+        # NOT date.today(). Fetching "today's" Elo would score every club
+        # using ratings from months after the actual decision.
+        from config import DECISION_DATE
+        run_date = DECISION_DATE.isoformat()
 
     logger.info("ClubElo loader — date=%s", run_date)
 
@@ -197,9 +203,13 @@ def load_clubelo_bronze(
         # which raises ValueError("day is out of range for month") whenever
         # today is the 1st of any month (day=0 is invalid). timedelta
         # handles month/year boundaries correctly in all cases.
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        logger.warning("Retrying with yesterday: %s", yesterday)
-        elo_rows = _fetch_clubelo_csv(yesterday)
+        # TEMPORAL CUTOFF FIX: fallback must be one day before whatever
+        # `run_date` actually was (DECISION_DATE by default), not one day
+        # before today — otherwise a failed fetch silently falls back to
+        # real-time data instead of decision-time data.
+        fallback_date = (date.fromisoformat(run_date) - timedelta(days=1)).isoformat()
+        logger.warning("Retrying with day before run_date: %s", fallback_date)
+        elo_rows = _fetch_clubelo_csv(fallback_date)
 
     if not elo_rows:
         logger.error("ClubElo: no data retrieved — returning empty")

@@ -1,9 +1,43 @@
 # dashboard/data_loader.py
 # Football Atlas Dashboard — Data Loading Utilities
 #
-# Added 2026-07-14. Deliberately has ZERO Streamlit imports so it can be
-# unit-tested on its own (see tests/test_dashboard_data_loader.py) without
-# needing a running Streamlit server.
+# Added 2026-07-14. Originally had ZERO Streamlit imports so it could be
+# unit-tested without a running Streamlit server (see
+# tests/test_dashboard_data_loader.py). That's still true in spirit —
+# `st.cache_data` works correctly outside a live app too (Streamlit calls
+# this "bare mode": you get a harmless "No runtime found"/"missing
+# ScriptRunContext" warning on stderr, but caching and return values are
+# 100% correct — verified manually before relying on it here). What
+# CHANGED on 2026-08-01 (spec `22_dashboard_caching.md`) is that this file
+# now imports `streamlit` itself, purely to reach `st.cache_data` — no
+# other Streamlit API (no widgets, no layout calls) is used here, so
+# nothing in this module actually requires a live app; it just requires
+# the `streamlit` package to be installed (already true — it's in
+# requirements.txt and every dashboard page already depends on it).
+#
+# CACHING (spec #22): every load_latest_*()/load_all_*() function below
+# that reads from disk is wrapped in `@st.cache_data(ttl=300)`. These
+# functions take NO arguments, so `st.cache_data`'s default per-argument
+# cache key collapses to a single global slot per function — repeated
+# calls within the 5-minute TTL window return the cached result without
+# touching disk again, but a NEW players_scored_*.csv/top26_*.csv written
+# by a fresh run_gold.py won't be picked up until that TTL expires (or the
+# process restarts). This is a deliberate v1 tradeoff, not an oversight:
+# at this project's actual usage pattern (a pipeline re-run is a rare,
+# manual, several-minutes-long event — never happening twice inside the
+# same 5-minute window in normal operation), "stale for up to 5 minutes
+# after a re-run" is an acceptable price for "don't re-read 7 files from
+# disk on every single sidebar filter click". If that usage pattern ever
+# changes (e.g. an automated scheduler re-running run_gold.py every
+# minute), this TTL needs revisiting or replacing with an mtime/run_date-
+# aware cache key.
+#
+# TESTING IMPLICATION: because the cache is a single global slot per
+# function (not per-tmp_path), tests/test_dashboard_data_loader.py's
+# `fake_dirs` fixture now also calls `.clear()` on every cached function
+# before each test — otherwise test N+1 could see test N's cached result
+# even though it points GOLD_DIR/BRONZE_DIR at a completely different
+# tmp_path. See that fixture for the actual reset logic.
 #
 # Reads directly from local disk (GOLD_DIR / BRONZE_DIR below), matching
 # the run_date-suffixed filename convention every run_*.py script already
@@ -18,9 +52,12 @@ import glob
 import json
 import logging
 import os
+import re
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import streamlit as st
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +80,13 @@ def _latest_file(directory: Path, prefix: str, suffix: str) -> Path | None:
     return Path(matches[-1]) if matches else None
 
 
+@st.cache_data(ttl=300)  # 5 min — see module docstring for the staleness/redundant-reads tradeoff
 def load_latest_top26() -> pd.DataFrame | None:
-    """Loads the most recent top26_*.csv. Returns None if none exists yet."""
+    """Loads the most recent top26_*.csv. Returns None if none exists yet.
+
+    Cached for up to 5 minutes (ttl=300) — a fresh run_gold.py output can
+    take up to 5 minutes to appear in the dashboard. See module docstring.
+    """
     path = _latest_file(GOLD_DIR, "top26_", ".csv")
     if path is None:
         logger.warning("No top26_*.csv found in %s — run run_gold.py first.", GOLD_DIR)
@@ -54,8 +96,13 @@ def load_latest_top26() -> pd.DataFrame | None:
     return df
 
 
+@st.cache_data(ttl=300)  # 5 min — see module docstring for the staleness/redundant-reads tradeoff
 def load_latest_players_scored() -> pd.DataFrame | None:
-    """Loads the most recent players_scored_*.csv (all 49 candidates, full columns)."""
+    """Loads the most recent players_scored_*.csv (all 49 candidates, full columns).
+
+    Cached for up to 5 minutes (ttl=300) — a fresh run_gold.py output can
+    take up to 5 minutes to appear in the dashboard. See module docstring.
+    """
     path = _latest_file(GOLD_DIR, "players_scored_", ".csv")
     if path is None:
         logger.warning("No players_scored_*.csv found in %s — run run_gold.py first.", GOLD_DIR)
@@ -65,8 +112,13 @@ def load_latest_players_scored() -> pd.DataFrame | None:
     return df
 
 
+@st.cache_data(ttl=300)  # 5 min — see module docstring for the staleness/redundant-reads tradeoff
 def load_latest_squad_summary() -> dict | None:
-    """Loads the most recent squad_summary_*.json."""
+    """Loads the most recent squad_summary_*.json.
+
+    Cached for up to 5 minutes (ttl=300) — a fresh run_gold.py output can
+    take up to 5 minutes to appear in the dashboard. See module docstring.
+    """
     path = _latest_file(GOLD_DIR, "squad_summary_", ".json")
     if path is None:
         logger.warning("No squad_summary_*.json found in %s — run run_gold.py first.", GOLD_DIR)
@@ -77,11 +129,14 @@ def load_latest_squad_summary() -> dict | None:
     return data
 
 
+@st.cache_data(ttl=300)  # 5 min — see module docstring for the staleness/redundant-reads tradeoff
 def load_latest_selection_audit() -> dict | None:
     """
     Loads the most recent selection_audit_*.json, produced by
     run_selection_audit.py (NOT run_gold.py — this is a standalone,
     deliberately-not-wired-in analysis, see that script's header for why).
+
+    Cached for up to 5 minutes (ttl=300) — see module docstring.
     """
     path = _latest_file(GOLD_DIR, "selection_audit_", ".json")
     if path is None:
@@ -93,6 +148,7 @@ def load_latest_selection_audit() -> dict | None:
     return data
 
 
+@st.cache_data(ttl=300)  # 5 min — see module docstring for the staleness/redundant-reads tradeoff
 def load_latest_injury_predictor() -> dict | None:
     """
     Loads the most recent injury_predictor_summary_*.json, produced by
@@ -100,6 +156,8 @@ def load_latest_injury_predictor() -> dict | None:
     rule-based index, NOT a trained model). Replaced the earlier
     load_latest_injury_risk()/run_injury_risk.py (LOOCV ML attempt) on
     2026-07-29 — see run_injury_predictor.py's header for why.
+
+    Cached for up to 5 minutes (ttl=300) — see module docstring.
     """
     path = _latest_file(GOLD_DIR, "injury_predictor_summary_", ".json")
     if path is None:
@@ -111,6 +169,7 @@ def load_latest_injury_predictor() -> dict | None:
     return data
 
 
+@st.cache_data(ttl=300)  # 5 min — see module docstring for the staleness/redundant-reads tradeoff
 def load_latest_chemistry_pairs() -> list[dict]:
     """
     Loads the most recent statsbomb_chemistry/chemistry_pairs_*.json
@@ -120,6 +179,8 @@ def load_latest_chemistry_pairs() -> list[dict]:
     Returns an empty list (not None) if not found — the Chemistry page
     handles this gracefully by showing an explanatory message instead of
     crashing, since this is genuinely optional/supplementary data.
+
+    Cached for up to 5 minutes (ttl=300) — see module docstring.
     """
     chem_dir = BRONZE_DIR / "statsbomb_chemistry"
     path = _latest_file(chem_dir, "chemistry_pairs_", ".json")
@@ -164,3 +225,170 @@ COMPONENT_COLUMNS_CORE = [
 def available_component_columns(df: pd.DataFrame) -> list[str]:
     """Returns whichever composite sub-score columns actually exist in df, in a stable display order."""
     return [c for c in COMPONENT_COLUMNS_CORE + NEW_COMPONENT_COLUMNS if c in df.columns]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# #18 — Historical Trend View Across Gold Snapshots
+# ══════════════════════════════════════════════════════════════════════════
+# Added 2026-08-01. Every past run_gold.py run leaves its
+# gold/players_scored_YYYYMMDD_HHMMSS.csv behind — this reads ALL of them
+# (not just the latest, see load_latest_players_scored() above) into one
+# long-format DataFrame so a player's DSSScore/Rank can be tracked over
+# time instead of only ever showing a single snapshot.
+#
+# DECISION_DATE / spec #1 CAVEAT — READ BEFORE CHANGING THIS DEFAULT:
+# "18_historical_trend_view.md" asks for this loader to be "DECISION_DATE-
+# aware (spec #1)" and to exclude, or clearly flag, "stale pre-fix
+# snapshots ... non-cutoff-enforced ones". As of this change, spec #1
+# (the Bronze/Silver-layer temporal-contamination fix that would make
+# run_gold.py accept a validated `--as-of` and stamp its outputs
+# accordingly — see config.py § 0) has NOT been implemented anywhere in
+# this codebase: run_gold.py has no `--as-of` flag, and no Gold output
+# (players_scored_*.csv or squad_summary_*.json) carries any field
+# recording whether DECISION_DATE was enforced for that run.
+#
+# That means, today, there is NO reliable signal to tell a "cutoff-
+# enforced" snapshot apart from a "stale pre-fix" one — every single
+# gold/players_scored_*.csv currently on disk falls in the same
+# "pre-fix, may contain leaked data" bucket described by the spec.
+# EXCLUDING all of them would leave this entire feature empty (zero
+# history to show), which defeats the point of #18. So the decision here
+# is: include every snapshot, but tag each one via `is_pre_cutoff_fix`
+# below and let the dashboard page render the "pre-fix, may contain
+# leaked data" warning from 18_historical_trend_view.md instead of
+# silently hiding the data.
+#
+# FORWARD COMPATIBILITY: once spec #1 lands and run_gold.py starts
+# stamping a `decision_date_enforced: true/false` field into
+# squad_summary_*.json (recommended location for that flag, once it
+# exists), update `_parse_run_date`'s caller below to read it, and this
+# loader will start excluding/flagging correctly without any other
+# change needed on the dashboard page.
+_SNAPSHOT_FILENAME_RE = re.compile(r"players_scored_(\d{8}_\d{6})\.csv$")
+
+
+def _parse_run_date(path: Path):
+    """Parses the YYYYMMDD_HHMMSS run_date out of a players_scored_*.csv filename."""
+    match = _SNAPSHOT_FILENAME_RE.search(path.name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
+    except ValueError:
+        return None
+
+
+@st.cache_data(ttl=300)  # 5 min — see module docstring; extends spec #22's pattern beyond
+                          # the literal load_latest_* naming since this reads EVERY
+                          # players_scored_*.csv snapshot on every call (heavier than any
+                          # single load_latest_*() call), which is exactly the kind of
+                          # redundant disk I/O spec #22's Objective section describes.
+def load_all_players_scored_history(include_pre_cutoff_fix: bool = True) -> pd.DataFrame:
+    """
+    Loads EVERY gold/players_scored_*.csv snapshot (not just the latest)
+    into one long-format DataFrame: one row per (player, run_date).
+
+    Args:
+        include_pre_cutoff_fix: whether to include snapshots that predate
+            spec #1's DECISION_DATE-cutoff enforcement (see the module-level
+            note above `_SNAPSHOT_FILENAME_RE` for why this currently means
+            "every snapshot that exists today"). Defaults to True so the
+            page has data to show; set False once spec #1 lands and you
+            want to see only cutoff-enforced runs.
+
+    Returns:
+        A DataFrame with columns `run_date` (datetime), `source_file`,
+        `is_pre_cutoff_fix` (bool), plus every column from the underlying
+        players_scored_*.csv files (player_id, player_name, DSSScore,
+        Rank, position, and whichever sub-score columns that particular
+        run produced — see NEW_COMPONENT_COLUMNS above; older runs won't
+        have all of them). Sorted by run_date ascending. Returns an EMPTY
+        DataFrame (not None) if no snapshots are found or none survive
+        the `include_pre_cutoff_fix` filter — callers should check
+        `.empty`, matching the rest of this module's "never crash the
+        page, show an explanatory message instead" convention.
+    """
+    pattern = str(GOLD_DIR / "players_scored_*.csv")
+    paths = sorted(Path(p) for p in glob.glob(pattern))
+    if not paths:
+        logger.warning("No players_scored_*.csv snapshots found in %s.", GOLD_DIR)
+        return pd.DataFrame()
+
+    frames = []
+    for path in paths:
+        run_date = _parse_run_date(path)
+        if run_date is None:
+            logger.warning("Skipping %s — could not parse a run_date from its filename.", path.name)
+            continue
+
+        # See the big caveat above `_SNAPSHOT_FILENAME_RE`: there is currently
+        # no per-run signal for whether DECISION_DATE was actually enforced,
+        # so every existing snapshot is conservatively treated as pre-fix.
+        is_pre_cutoff_fix = True
+        if not include_pre_cutoff_fix and is_pre_cutoff_fix:
+            continue
+
+        df = pd.read_csv(path)
+        meta = pd.DataFrame({
+            "run_date": [run_date] * len(df),
+            "source_file": [path.name] * len(df),
+            "is_pre_cutoff_fix": [is_pre_cutoff_fix] * len(df),
+        })
+        df = pd.concat([meta, df], axis=1)
+        frames.append(df)
+
+    if not frames:
+        logger.warning(
+            "No players_scored_*.csv snapshots survived the include_pre_cutoff_fix=%s filter.",
+            include_pre_cutoff_fix,
+        )
+        return pd.DataFrame()
+
+    history = pd.concat(frames, ignore_index=True, sort=False)
+    return history.sort_values("run_date").reset_index(drop=True)
+
+
+def compute_biggest_movers(history: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compares the two most recent run_dates in `history` (as returned by
+    load_all_players_scored_history()) and returns a DataFrame of players
+    ranked by absolute Rank change between those two snapshots, largest
+    movement first.
+
+    Args:
+        history: long-format DataFrame from load_all_players_scored_history().
+
+    Returns:
+        DataFrame with columns: player_id, player_name, position,
+        previous_rank, current_rank, rank_change (positive = moved UP,
+        i.e. Rank number got smaller), previous_run_date, current_run_date.
+        Empty DataFrame if `history` has fewer than 2 distinct run_dates.
+    """
+    if history is None or history.empty:
+        return pd.DataFrame()
+
+    run_dates = sorted(history["run_date"].unique())
+    if len(run_dates) < 2:
+        return pd.DataFrame()
+
+    previous_date, current_date = run_dates[-2], run_dates[-1]
+    previous = history[history["run_date"] == previous_date].set_index("player_id")
+    current = history[history["run_date"] == current_date].set_index("player_id")
+
+    common_ids = current.index.intersection(previous.index)
+    if len(common_ids) == 0:
+        return pd.DataFrame()
+
+    movers = pd.DataFrame({
+        "player_id": common_ids,
+        "player_name": current.loc[common_ids, "player_name"].values,
+        "position": current.loc[common_ids, "position"].values,
+        "previous_rank": previous.loc[common_ids, "Rank"].values,
+        "current_rank": current.loc[common_ids, "Rank"].values,
+    })
+    # Positive rank_change = moved UP the ranking (rank NUMBER decreased).
+    movers["rank_change"] = movers["previous_rank"] - movers["current_rank"]
+    movers["previous_run_date"] = previous_date
+    movers["current_run_date"] = current_date
+
+    return movers.sort_values("rank_change", key=abs, ascending=False).reset_index(drop=True)

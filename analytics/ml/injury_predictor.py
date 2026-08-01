@@ -101,10 +101,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 
 import numpy as np
 import pandas as pd
+
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -215,9 +217,14 @@ def compute_injury_risk(
         df: must have wiki_dob, inj_count_2y, inj_days_missed_2y columns.
             inj_last_type is optional (missing -> neutral component, see
             _classify_injury_type).
-        reference_date: date to compute age as-of. Defaults to today.
-            Pass an explicit tournament/selection date for reproducible
-            output independent of when the script happens to run.
+        reference_date: date to compute age as-of. Defaults to
+            config.DECISION_DATE (NOT today's date — see "04_injury_predictor
+            _temporal_fix.md" spec #4: using datetime.now() here would let
+            the age component silently drift every day the script is re-run,
+            and — for players near an age-bracket boundary — leak
+            information from after the actual squad-decision date into the
+            risk score). Pass an explicit date to override for what-if
+            analysis.
 
     Returns:
         InjuryRiskResult. df gains:
@@ -238,7 +245,12 @@ def compute_injury_risk(
             f"missing: {missing_required}"
         )
 
-    ref_date = reference_date or datetime.now().date()
+    # spec #4 fix: default to the fixed DECISION_DATE, not datetime.now().
+    # datetime.now() here would make the age component (and therefore
+    # InjuryRiskScore) silently change every day the script is re-run,
+    # independent of any real change in a player's data — and could leak
+    # post-decision-date information into a supposedly point-in-time score.
+    ref_date = reference_date or config.DECISION_DATE
     result_df = df.copy()
 
     n = len(result_df)

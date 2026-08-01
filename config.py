@@ -9,6 +9,41 @@
 #   CONFLICT-04 — DEFENSIVE_WEIGHTS cleaned (Tkl/Int/Clr removed — no Bronze source)
 #   CONFLICT-05 — OFFENSIVE_WEIGHTS cleaned (xAG_per90 removed — no Bronze source)
 
+from datetime import date
+
+# ══════════════════════════════════════════════════════════════════════════════
+# § 0 — DECISION_DATE (temporal cutoff — spec 01_temporal_cutoff.md)
+# ══════════════════════════════════════════════════════════════════════════════
+# MERGE NOTE (2026-08-01): a prior delivered archive set this to
+# date(2026, 6, 1), justified only as "matches tests/test_injury_predictor.py's
+# REF_DATE convention" with an explicit "CONFIRM/ADJUST before relying on it"
+# caveat. That value is WRONG, not just unverified: this same file,
+# analytics/ml/selection_classifier.py (REAL_SQUAD_2026, line ~5), documents
+# — sourced against FIFA/worldcupstats.football — that Morocco's official
+# 26-man WC2026 squad was announced 2026-05-26. A DECISION_DATE of 2026-06-01
+# is AFTER that announcement, which defeats the entire purpose of a decision
+# cutoff (it would let post-announcement data leak straight back in).
+# Corrected to 2026-05-25 — the day BEFORE the public announcement — so
+# nothing dated on/after announcement day can leak into a tool meant to
+# support that decision. tests/test_injury_predictor.py's REF_DATE=2026-06-01
+# fixture is a separate, self-contained what-if scenario for that test file
+# only and does not need to match this constant.
+#
+# Single project-wide "as-of" date. Every date-relative computation that
+# feeds a live recommendation (injury lookback windows, ClubElo snapshot
+# date, age calculations) MUST resolve relative to this date, never to real
+# wall-clock time (datetime.now()/date.today()).
+#
+# SCOPE NOTE: analytics/opponent_analyzer.py, analytics/rotation_strategy.py
+# and analytics/ml/selection_classifier.py intentionally use REAL post-
+# tournament data for retrospective auditing (run_selection_audit.py,
+# run_rotation_strategy.py, dashboard pages 5/6/8) — verified via grep that
+# none of them are imported by run_silver.py / run_gold.py. They are left
+# untouched on purpose: an audit tool must see the real outcome to audit
+# against it. Only the LIVE path (Bronze → Silver → Gold → DSSScore) is in
+# scope for this constant.
+DECISION_DATE: date = date(2026, 5, 25)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # § 1 — Offensive Weights (PerformanceScore subscore)
 # ══════════════════════════════════════════════════════════════════════════════

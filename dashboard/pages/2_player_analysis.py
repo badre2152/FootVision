@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_players_scored, available_component_columns
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.notes_store import get_note, save_note
 
 st.set_page_config(page_title="Football Atlas — Player Analysis", page_icon="📊", layout="wide")
 render_sidebar()
@@ -94,3 +95,45 @@ st.divider()
 st.subheader(f"How does {row['player_name']} compare to other {row['position']}s?")
 same_position = players[players["position"] == row["position"]].sort_values("DSSScore", ascending=False)
 st.bar_chart(same_position.set_index("player_name")["DSSScore"])
+
+# ── #20 — Coach/Staff Notes ─────────────────────────────────────────────
+# Free-text qualitative judgment (training-ground impressions, character,
+# tactical fit) that no scraped data source captures — persisted in
+# data/coach_notes.json via dashboard/notes_store.py, deliberately
+# outside the Bronze/Silver/Gold pipeline so a `run_gold.py` re-run never
+# touches it (see that module's docstring for why).
+st.divider()
+st.subheader("📝 Coach/Staff Notes")
+st.caption(
+    "Qualitative observations no data source captures — e.g. \"final ball has dropped "
+    "off in training this week.\" Stored separately from the scraped pipeline; survives "
+    "a full Bronze → Silver → Gold re-run untouched."
+)
+
+existing_note = get_note(row["player_id"])
+
+note_area_col, author_col = st.columns([3, 1])
+with author_col:
+    author_input = st.text_input(
+        "Your name (optional)",
+        key="coach_note_author",
+        placeholder="e.g. Coach Regragui",
+        help="Single-user for now — becomes a real identity once spec #6's authentication lands.",
+    )
+with note_area_col:
+    note_text = st.text_area(
+        f"Note for {row['player_name']}",
+        value=(existing_note["text"] if existing_note else ""),
+        key=f"coach_note_text_{selected_id}",
+        height=120,
+        placeholder="e.g. Final ball has dropped off in training this week; still a strong dressing-room voice.",
+    )
+
+if st.button("💾 Save note", key=f"coach_note_save_{selected_id}"):
+    existing_note = save_note(row["player_id"], note_text, author=author_input or None)
+    st.success("Note saved.")
+
+if existing_note and existing_note.get("text"):
+    st.caption(f"🕒 Last edited by **{existing_note['author']}** at {existing_note['updated_at']} UTC")
+elif existing_note is None:
+    st.caption("No note yet for this player.")

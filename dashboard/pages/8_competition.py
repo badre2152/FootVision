@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_top26, load_latest_players_scored
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.components import post_hoc_banner
 from analytics.competition_context import build_best_xi, compare_formations, FORMATIONS
 from analytics.opponent_analyzer import get_fixtures, tournament_run_summary
 
@@ -104,6 +105,10 @@ with tab_best_xi:
 # TAB 2 — Real World Cup Run
 # ─────────────────────────────────────────────────────────────────────────
 with tab_history:
+    post_hoc_banner(
+        "Covers everything in this tab: the summary metrics below, the "
+        "match-by-match results, and the goals-for/against chart."
+    )
     st.caption(
         "Morocco's real, final 2026 FIFA World Cup match record — static historical "
         "data (the tournament has concluded), not opponent tactical analysis. "

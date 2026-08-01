@@ -302,10 +302,12 @@ def load_sofifa_bronze(
         results.append(out)
         time.sleep(delay + random.uniform(-0.3, 0.5))
 
-    # رفع إلى MinIO
-    payload = {"run_date": run_date, "players": results}
+    # رفع إلى MinIO — لازم تكون لائحة مسطّحة (flat list) بحال باقي كل
+    # الـ loaders (upload_json(BUCKET, name, records))، ماشي dict ملفوف.
+    # See run_sofifa.py::build_minio_upload_payload() docstring +
+    # 03_regression_protection.md — نفس الخلل بالضبط كان هنا.
     obj_name = OBJECT_PATH.format(date=run_date)
-    upload_json(BUCKET, obj_name, payload)
+    upload_json(BUCKET, obj_name, results)
     logger.info(
         "SoFIFA complete: %d/%d with attrs | uploaded → %s",
         sum(1 for r in results if "sofifa_overall" in r),

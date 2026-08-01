@@ -43,9 +43,15 @@ def _parse_tm_date(date_str: str) -> datetime | None:
     return None
 
 
-def fetch_injury_history(tm_id: int | str, slug: str = "-") -> dict:
+def fetch_injury_history(
+    tm_id: int | str,
+    slug: str = "-",
+    as_of: "datetime | None" = None,
+) -> dict:
     """
-    Fetches last 2 years of injury history from Transfermarkt for one player.
+    Fetches last 2 years of injury history from Transfermarkt for one player,
+    as of `as_of` (defaults to config.DECISION_DATE — TEMPORAL CUTOFF FIX,
+    01_temporal_cutoff.md).
 
     v16 fix:
         B-05: _TWO_YEARS_AGO was computed at import time (stale on long runs).
@@ -56,17 +62,31 @@ def fetch_injury_history(tm_id: int | str, slug: str = "-") -> dict:
               (TM shows "- days" or blank). Ongoing injuries — often the most severe —
               were silently counted as 0 days, severely underestimating risk.
               Fix: detect ongoing injuries by checking date_to; estimate days as
-              (today - date_from). This correctly captures ACL-level injuries.
+              (as_of - date_from). This correctly captures ACL-level injuries.
+
+    TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): both the "last 2 years" lookback
+    window AND the ongoing-injury day estimate previously anchored to
+    datetime.now() (whenever the scraper happened to run — e.g. July 2026, a
+    month after the World Cup). That silently pulled in injuries that occurred
+    AFTER the actual decision date and inflated "ongoing injury" day counts
+    using real-time elapsed instead of decision-time elapsed. Both now anchor
+    to `as_of` (config.DECISION_DATE by default), so a fresh scrape run today
+    reproduces exactly what Coach Ouahbi could have known on DECISION_DATE.
 
     Returns dict with inj_* columns, or {} on failure.
     Columns:
-        inj_count_2y       — number of injuries in last 2 years
-        inj_days_missed_2y — total days missed (includes estimated ongoing days)
+        inj_count_2y       — number of injuries in last 2 years (relative to as_of)
+        inj_days_missed_2y — total days missed (includes estimated ongoing days,
+                              capped at as_of — never counts days after the cutoff)
         inj_last_type      — type of most recent injury (string)
         inj_last_date      — date of most recent injury (YYYY-MM-DD)
     """
+    if as_of is None:
+        from config import DECISION_DATE
+        as_of = datetime.combine(DECISION_DATE, datetime.min.time())
+
     # FIX B-05: compute cutoff inside function, not at module level
-    two_years_ago = datetime.now() - timedelta(days=730)
+    two_years_ago = as_of - timedelta(days=730)
 
     url = _INJURY_URL.format(base=_TM_BASE, slug=slug, tm_id=tm_id)
     resp = None
@@ -130,11 +150,15 @@ def fetch_injury_history(tm_id: int | str, slug: str = "-") -> dict:
             days = int(days_text)
 
         elif date_from and (not date_to or date_to_text in ("-", "", "present", "-")):
-            # FIX C-06: Ongoing injury — estimate from date_from to today
-            days = (datetime.now() - date_from).days
+            # FIX C-06: Ongoing injury — estimate from date_from to as_of.
+            # TEMPORAL CUTOFF FIX: was (datetime.now() - date_from), which
+            # leaked real-time-elapsed (e.g. scraped in July 2026, weeks
+            # after the decision date) into a score meant to reflect only
+            # what was knowable on DECISION_DATE.
+            days = (as_of - date_from).days
             logger.info(
-                "Ongoing injury detected for tm_id=%s (%s since %s) — estimated %d days.",
-                tm_id, inj_type, date_from.strftime("%Y-%m-%d"), days,
+                "Ongoing injury detected for tm_id=%s (%s since %s) — estimated %d days as of %s.",
+                tm_id, inj_type, date_from.strftime("%Y-%m-%d"), days, as_of.date(),
             )
         else:
             # Unknown format — default to 0 but log it
@@ -144,11 +168,22 @@ def fetch_injury_history(tm_id: int | str, slug: str = "-") -> dict:
             )
             days = 0
 
+        # TEMPORAL CUTOFF FIX: an injury dated AFTER as_of (e.g. scraped
+        # mid-2026 and TM has since logged a June/July injury) must never
+        # enter the window — it would be information from the future
+        # relative to the decision being supported.
+        if date_from and date_from > as_of:
+            logger.debug(
+                "Excluding injury for tm_id=%s dated %s — after as_of=%s (temporal cutoff).",
+                tm_id, date_from.strftime("%Y-%m-%d"), as_of.date(),
+            )
+            continue
+
         if date_from and date_from >= two_years_ago:
             injuries_2y.append({
                 "type": inj_type,
                 "date": date_from,
-                "days": days,
+                "days": max(0, days),
             })
 
     # Sort by date descending — most recent first
@@ -168,10 +203,17 @@ def fetch_injury_history(tm_id: int | str, slug: str = "-") -> dict:
 def load_injury_bronze(
     seed_df: pd.DataFrame,
     run_date: str = "",
+    as_of: "datetime | None" = None,
 ) -> str:
     """
     Generates inj_* columns for all players in seed_df,
     then writes raw results to MinIO s3://football-bronze/transfermarkt_injury/.
+
+    NOTE: `run_date` is only the Bronze filename timestamp (when the scrape
+    ran) — it is unrelated to `as_of`, which is the decision-date cutoff
+    applied to the DATA itself (config.DECISION_DATE by default, TEMPORAL
+    CUTOFF FIX 01_temporal_cutoff.md). Keeping these separate is deliberate:
+    re-running the scraper today must still produce data as-of DECISION_DATE.
 
     v17 fixes:
         C-01: run_date defaults to now() if not supplied
@@ -199,7 +241,7 @@ def load_injury_bronze(
 
         slug  = row.get("tm_slug") or "-"
         time.sleep(1.5)  # Transfermarkt is very rate-sensitive
-        stats = fetch_injury_history(tm_id=int(tm_id), slug=str(slug))
+        stats = fetch_injury_history(tm_id=int(tm_id), slug=str(slug), as_of=as_of)
         records.append({"player_id": row["player_id"], **stats})
 
     # FIX C-08: 50% expected (TM covers ~45/49)

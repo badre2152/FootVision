@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from analytics.scoring.chemistry_score import compute_chemistry_score
 from analytics.scoring.pressure_index import compute_pressure_index, _impute_pressure_delta
-from analytics.scoring.flexibility_score import compute_flexibility_score
+from analytics.scoring.flexibility_score import compute_flexibility_score, secondary_position_groups
 from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary
 from analytics.scoring.minutes_filter import apply_minutes_filter
 from analytics.scoring.performance_score import compute_final_score
@@ -344,6 +344,145 @@ class TestCompositeWeights:
             "analytics/nlp/sentiment_analyzer.py doesn't exist — remove the "
             "weight or restore the module."
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# secondary_position_groups() — spec #13 TM-label -> GK/DEF/MID/FWD mapping
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSecondaryPositionGroups:
+
+    def test_maps_known_labels(self):
+        assert secondary_position_groups("Right Midfield, Left-Back") == {"MID", "DEF"}
+
+    def test_single_label(self):
+        assert secondary_position_groups("Centre-Forward") == {"FWD"}
+
+    def test_none_and_nan_and_empty_return_empty_set(self):
+        assert secondary_position_groups(None) == set()
+        assert secondary_position_groups(np.nan) == set()
+        assert secondary_position_groups("") == set()
+        assert secondary_position_groups("   ") == set()
+
+    def test_unrecognized_label_skipped_not_crashed(self):
+        assert secondary_position_groups("Some New TM Label") == set()
+        # mixed known + unknown: known one still comes through
+        assert secondary_position_groups("Left-Back, Some New TM Label") == {"DEF"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# select_squad_with_position_cap() — spec #13 flexibility tiebreak
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestFlexibilityTiebreak:
+
+    def _synthetic_df(self):
+        """
+        6 GK, 6 DEF, 3 MID, 2 FWD candidates with caps {GK:2, DEF:3, MID:2, FWD:1}
+        (top_n=8) — small but structurally identical to the real 49-player /
+        26-squad case: MID has the thinnest surplus (3 candidates for a cap
+        of 2 -> surplus 1), making it the "understaffed" group.
+
+        For DEF's last (3rd) slot: "Def C" and "Def D" are near-tied
+        (0.001 apart, well under the 0.01 threshold). "Def D" lists MID as a
+        secondary position (understaffed) and should be preferred over
+        "Def C", who has no secondary positions.
+        """
+        rows = [
+            # GK
+            {"player_id": "GK1", "player_name": "Gk A", "position": "GK", "DSSScore": 0.90, "tm_secondary_positions": None},
+            {"player_id": "GK2", "player_name": "Gk B", "position": "GK", "DSSScore": 0.85, "tm_secondary_positions": None},
+            {"player_id": "GK3", "player_name": "Gk C", "position": "GK", "DSSScore": 0.40, "tm_secondary_positions": None},
+            {"player_id": "GK4", "player_name": "Gk D", "position": "GK", "DSSScore": 0.35, "tm_secondary_positions": None},
+            {"player_id": "GK5", "player_name": "Gk E", "position": "GK", "DSSScore": 0.30, "tm_secondary_positions": None},
+            {"player_id": "GK6", "player_name": "Gk F", "position": "GK", "DSSScore": 0.25, "tm_secondary_positions": None},
+            # DEF — the tiebreak case is here (last/3rd slot)
+            {"player_id": "DEF1", "player_name": "Def A", "position": "DEF", "DSSScore": 0.88, "tm_secondary_positions": None},
+            {"player_id": "DEF2", "player_name": "Def B", "position": "DEF", "DSSScore": 0.80, "tm_secondary_positions": None},
+            {"player_id": "DEF3", "player_name": "Def C", "position": "DEF", "DSSScore": 0.601, "tm_secondary_positions": None},
+            {"player_id": "DEF4", "player_name": "Def D", "position": "DEF", "DSSScore": 0.600, "tm_secondary_positions": "Central Midfield"},
+            {"player_id": "DEF5", "player_name": "Def E", "position": "DEF", "DSSScore": 0.40, "tm_secondary_positions": None},
+            {"player_id": "DEF6", "player_name": "Def F", "position": "DEF", "DSSScore": 0.35, "tm_secondary_positions": None},
+            # MID — thin: only 3 candidates for a cap of 2 (surplus 1)
+            {"player_id": "MID1", "player_name": "Mid A", "position": "MID", "DSSScore": 0.75, "tm_secondary_positions": None},
+            {"player_id": "MID2", "player_name": "Mid B", "position": "MID", "DSSScore": 0.70, "tm_secondary_positions": None},
+            {"player_id": "MID3", "player_name": "Mid C", "position": "MID", "DSSScore": 0.20, "tm_secondary_positions": None},
+            # FWD
+            {"player_id": "FWD1", "player_name": "Fwd A", "position": "FWD", "DSSScore": 0.65, "tm_secondary_positions": None},
+            {"player_id": "FWD2", "player_name": "Fwd B", "position": "FWD", "DSSScore": 0.20, "tm_secondary_positions": None},
+        ]
+        df = pd.DataFrame(rows)
+        df["Rank"] = df["DSSScore"].rank(ascending=False, method="min").astype(int)
+        df["club"] = "Club"
+        return df
+
+    def test_flexible_near_tied_player_is_selected_with_reason(self):
+        import run_gold
+        df = self._synthetic_df()
+        caps = {"GK": 2, "DEF": 3, "MID": 2, "FWD": 1}
+
+        squad_df = run_gold.select_squad_with_position_cap(
+            df, top_n=8, position_caps=caps,
+            use_flexibility_tiebreak=True, flex_tiebreak_threshold=0.01,
+            depth_chart_surplus_threshold=3,
+        )
+
+        def_names = set(squad_df[squad_df["position"] == "DEF"]["player_name"])
+        assert "Def D" in def_names, "Flexible near-tied player should fill the last DEF slot"
+        assert "Def C" not in def_names, "Non-flexible near-tied player should be swapped out"
+
+        reason_row = squad_df[squad_df["player_name"] == "Def D"].iloc[0]
+        assert reason_row["selection_reason"] != "", "Swap must be recorded, not silent"
+        assert "MID" in reason_row["selection_reason"]
+
+        # Everyone else keeps an empty (not-swapped) reason
+        others = squad_df[squad_df["player_name"] != "Def D"]
+        assert (others["selection_reason"] == "").all()
+
+    def test_position_caps_and_total_unchanged_by_tiebreak(self):
+        """Regardless of the tiebreak, hard position totals and squad size must hold."""
+        import run_gold
+        df = self._synthetic_df()
+        caps = {"GK": 2, "DEF": 3, "MID": 2, "FWD": 1}
+
+        squad_df = run_gold.select_squad_with_position_cap(
+            df, top_n=8, position_caps=caps, use_flexibility_tiebreak=True,
+        )
+        counts = squad_df["position"].value_counts().to_dict()
+        assert counts == caps
+        assert len(squad_df) == 8
+
+    def test_no_close_tie_leaves_pure_dsscore_order_unchanged(self):
+        """
+        Existing squad-selection behavior for cases with no close ties must be
+        unchanged — e.g. FWD's single slot ("Fwd A" @ 0.65 vs "Fwd B" @ 0.20)
+        isn't remotely close, so the higher-scored player wins regardless of
+        flexibility, exactly as before this spec.
+        """
+        import run_gold
+        df = self._synthetic_df()
+        caps = {"GK": 2, "DEF": 3, "MID": 2, "FWD": 1}
+
+        squad_df = run_gold.select_squad_with_position_cap(
+            df, top_n=8, position_caps=caps, use_flexibility_tiebreak=True,
+        )
+        fwd_names = set(squad_df[squad_df["position"] == "FWD"]["player_name"])
+        assert fwd_names == {"Fwd A"}
+
+    def test_disabling_tiebreak_falls_back_to_old_behavior(self):
+        import run_gold
+        df = self._synthetic_df()
+        caps = {"GK": 2, "DEF": 3, "MID": 2, "FWD": 1}
+
+        squad_df = run_gold.select_squad_with_position_cap(
+            df, top_n=8, position_caps=caps, use_flexibility_tiebreak=False,
+        )
+        def_names = set(squad_df[squad_df["position"] == "DEF"]["player_name"])
+        assert def_names == {"Def A", "Def B", "Def C"}, (
+            "With the tiebreak disabled, pure DSSScore order must win, "
+            "same as before spec #13."
+        )
+        assert (squad_df["selection_reason"] == "").all()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
