@@ -77,12 +77,18 @@ class TestFinalSquadPageSmokeTest:
     def test_page_runs_without_exception(self, gold_snapshot):
         _write_gold_snapshot(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
+        # spec #6 (06_authentication.md) login gate — bypass exactly like a
+        # real authenticated session, this test checks page CONTENT.
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception, f"Page raised: {[str(e) for e in at.exception]}"
 
     def test_replacement_expander_is_rendered_per_selected_player(self, gold_snapshot):
         _write_gold_snapshot(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
+        # spec #6 (06_authentication.md) login gate — bypass exactly like a
+        # real authenticated session, this test checks page CONTENT.
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception
 
@@ -99,6 +105,9 @@ class TestFinalSquadPageSmokeTest:
         # "🔄 Replacement options" expanders.
         _write_gold_snapshot(gold_snapshot, include_player_id=False)
         at = AppTest.from_file(PAGE_PATH)
+        # spec #6 (06_authentication.md) login gate — bypass exactly like a
+        # real authenticated session, this test checks page CONTENT.
+        at.session_state["_auth_ok"] = True
         at.run()
 
         assert not at.exception
@@ -110,6 +119,9 @@ class TestFinalSquadPageSmokeTest:
         # gold_snapshot dir exists but is empty — matches the pre-existing
         # "no Gold output found" path this page already had.
         at = AppTest.from_file(PAGE_PATH)
+        # spec #6 (06_authentication.md) login gate — bypass exactly like a
+        # real authenticated session, this test checks page CONTENT.
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception
         assert any("No Gold output found" in e.value for e in at.error)

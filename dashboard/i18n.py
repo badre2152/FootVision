@@ -738,6 +738,72 @@ STRINGS = {
         "fr": "ℹ️ Exécutez `python run_injury_predictor.py` pour afficher également l'indice de risque de blessure ici.",
         "ar": "ℹ️ شغّل `python run_injury_predictor.py` لعرض مؤشر خطر الإصابة هنا أيضًا.",
     },
+
+    # ────────────────────────────────────────────────────────────────
+    # dashboard/report_utils.py — CSV / PDF export (spec #12)
+    # ────────────────────────────────────────────────────────────────
+    "export.csv_button": {
+        "en": "⬇️ Download CSV", "fr": "⬇️ Télécharger le CSV", "ar": "⬇️ تحميل CSV",
+    },
+    "export.pdf_button": {
+        "en": "📄 Generate PDF Report", "fr": "📄 Générer le rapport PDF", "ar": "📄 إنشاء تقرير PDF",
+    },
+    "export.player_pdf_button": {
+        "en": "📄 Export Player PDF Profile", "fr": "📄 Exporter le profil PDF du joueur", "ar": "📄 تصدير ملف اللاعب PDF",
+    },
+    "export.filtered_note": {
+        "en": "⬆️ Both exports reflect the current sidebar filters, not the full 26.",
+        "fr": "⬆️ Les deux exports reflètent les filtres actuels de la barre latérale, pas les 26 au complet.",
+        "ar": "⬆️ التصديران يعكسان عوامل التصفية الحالية، وليس القائمة الكاملة (26).",
+    },
+    "export.pdf_title": {
+        "en": "Football Atlas — Final Squad Report",
+        "fr": "Football Atlas — Rapport de l'effectif final",
+        "ar": "Football Atlas — تقرير القائمة النهائية",
+    },
+    "export.pdf_scope_filtered": {
+        "en": "Filtered view (sidebar filters applied)",
+        "fr": "Vue filtrée (filtres de la barre latérale appliqués)",
+        "ar": "عرض مُصفّى (تم تطبيق عوامل تصفية الشريط الجانبي)",
+    },
+    "export.pdf_scope_full": {
+        "en": "Full unfiltered squad", "fr": "Effectif complet non filtré", "ar": "القائمة الكاملة بدون تصفية",
+    },
+    "export.pdf_disclaimer": {
+        "en": (
+            "Decision-support output only — not a replacement for coaching or "
+            "medical judgement. \"Justification\" shows each player's single "
+            "strongest scored sub-component, not a full explanation of the "
+            "ranking. See README.md's DECISION_DATE note for this project's "
+            "known temporal-consistency limitation."
+        ),
+        "fr": (
+            "Sortie d'aide à la décision uniquement — ne remplace pas le jugement "
+            "de l'encadrement technique ou médical. La « justification » indique "
+            "uniquement la sous-composante la plus forte de chaque joueur, pas une "
+            "explication complète du classement. Voir la note DECISION_DATE du "
+            "README.md pour la limite de cohérence temporelle connue de ce projet."
+        ),
+        "ar": (
+            "مخرجات دعم القرار فقط — لا تُغني عن حكم الطاقم التقني أو الطبي. "
+            "«التبرير» يعرض أقوى مكوّن فرعي لكل لاعب فقط، وليس تفسيرًا كاملاً "
+            "للترتيب. راجع ملاحظة DECISION_DATE في README.md لمعرفة محدودية "
+            "الاتساق الزمني المعروفة لهذا المشروع."
+        ),
+    },
+    "export.player_pdf_disclaimer": {
+        "en": "Decision-support output only — not a replacement for coaching or medical judgement.",
+        "fr": "Sortie d'aide à la décision uniquement — ne remplace pas le jugement de l'encadrement technique ou médical.",
+        "ar": "مخرجات دعم القرار فقط — لا تُغني عن حكم الطاقم التقني أو الطبي.",
+    },
+    "export.pdf_sub_score_header": {
+        "en": "Sub-score breakdown", "fr": "Détail des sous-scores", "ar": "تفصيل النقاط الفرعية",
+    },
+    "export.pdf_lang_note": {
+        "en": "ℹ️ The PDF itself is always generated in English — Arabic text shaping in PDFs needs extra font/rendering libraries not yet added to this project.",
+        "fr": "ℹ️ Le PDF est toujours généré en anglais — le rendu du texte arabe dans les PDF nécessite des bibliothèques de police/rendu supplémentaires non encore ajoutées à ce projet.",
+        "ar": "ℹ️ يُنشأ ملف PDF دائمًا باللغة الإنجليزية — عرض النص العربي داخل PDF يحتاج مكتبات خط/عرض إضافية لم تُضف بعد لهذا المشروع.",
+    },
 }
 
 

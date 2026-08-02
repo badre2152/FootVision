@@ -24,11 +24,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_top26, load_latest_players_scored
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.auth import require_auth
 from dashboard.components import post_hoc_banner
+from dashboard.report_utils import csv_download_button
 from analytics.competition_context import build_best_xi, compare_formations, FORMATIONS
 from analytics.opponent_analyzer import get_fixtures, tournament_run_summary
 
 st.set_page_config(page_title="Football Atlas — Competition Context", page_icon="🌍", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title("🌍 Competition Context")
 
@@ -80,6 +83,7 @@ with tab_best_xi:
             xi_display[cols_to_show].style.format({"DSSScore": "{:.4f}"}),
             width="stretch", height=430, hide_index=True,
         )
+        csv_download_button(xi_display[cols_to_show], filename_prefix="competition_starting_xi", key="csv_competition_xi")
 
     with right:
         st.subheader("Bench")
@@ -88,6 +92,7 @@ with tab_best_xi:
             result.bench[bench_cols].style.format({"DSSScore": "{:.4f}"}),
             width="stretch", height=430, hide_index=True,
         )
+        csv_download_button(result.bench[bench_cols], filename_prefix="competition_bench", key="csv_competition_bench")
 
     st.divider()
     st.subheader("Compare all formations")

@@ -34,9 +34,12 @@ from dashboard.data_loader import (
     available_component_columns,
 )
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.auth import require_auth
 from dashboard.components import pre_cutoff_fix_banner
+from dashboard.report_utils import csv_download_button
 
 st.set_page_config(page_title="Football Atlas — Historical Trend View", page_icon="📈", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title("📈 Historical Trend View")
 st.caption(
@@ -110,6 +113,7 @@ with st.expander("Raw snapshot values for this player"):
     ]
     display_cols = [c for c in display_cols if c in player_history.columns]
     st.dataframe(player_history[display_cols], width='stretch', hide_index=True)
+    csv_download_button(player_history[display_cols], filename_prefix="player_trend_history", key="csv_trend_player")
 
 st.divider()
 
@@ -139,4 +143,8 @@ else:
         display[["Player", "Position", "Previous Rank", "Current Rank", "Movement"]],
         width='stretch',
         hide_index=True,
+    )
+    csv_download_button(
+        display[["Player", "Position", "Previous Rank", "Current Rank", "Movement"]],
+        filename_prefix="biggest_movers", key="csv_trend_movers",
     )

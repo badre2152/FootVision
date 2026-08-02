@@ -37,10 +37,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_top26, load_latest_players_scored
 from dashboard.sidebar import render_sidebar
+from dashboard.auth import require_auth
 from dashboard.notes_store import get_all_notes
+from dashboard.report_utils import csv_download_button
 from analytics.competition_context import build_best_xi, FORMATIONS
 
 st.set_page_config(page_title="Football Atlas — Squad Builder", page_icon="🛠️", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title("🛠️ Squad Builder")
 st.caption(
@@ -182,6 +185,7 @@ st.dataframe(
     manual_xi_sorted[display_cols].style.format({"DSSScore": "{:.4f}"}),
     width="stretch", height=430, hide_index=True,
 )
+csv_download_button(manual_xi_sorted[display_cols], filename_prefix="squad_builder_xi", key="csv_squad_builder")
 
 # ── #20 — Coach/Staff Notes, compact read-only view ─────────────────────
 # This page uses player_name as its id_col throughout (see the module

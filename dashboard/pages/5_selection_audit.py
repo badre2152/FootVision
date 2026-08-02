@@ -29,9 +29,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_selection_audit, load_latest_injury_predictor
 from dashboard.sidebar import render_sidebar
+from dashboard.auth import require_auth
 from dashboard.i18n import t
+from dashboard.report_utils import csv_download_button
 
 st.set_page_config(page_title="Football Atlas — Selection Audit", page_icon="🔍", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title(t("nav.selection_audit_title"))
 
@@ -81,6 +84,7 @@ with left:
     fp_df = pd.DataFrame(audit["dss_favored_not_picked"])
     if len(fp_df):
         st.dataframe(fp_df, width='stretch', hide_index=True)
+        csv_download_button(fp_df, filename_prefix="audit_dss_favored_not_picked", key="csv_audit_fp")
     else:
         st.caption(t("audit.dss_favored_empty"))
 
@@ -89,6 +93,7 @@ with right:
     fn_df = pd.DataFrame(audit["picked_not_dss_favored"])
     if len(fn_df):
         st.dataframe(fn_df, width='stretch', hide_index=True)
+        csv_download_button(fn_df, filename_prefix="audit_picked_not_dss_favored", key="csv_audit_fn")
     else:
         st.caption(t("audit.coach_picked_empty"))
 
@@ -142,6 +147,8 @@ if injury_data is not None:
             st.write(", ".join(injury_data["low_confidence_players"]))
 
     st.markdown(f"**{t('audit.highest_risk_header')}**")
-    st.dataframe(pd.DataFrame(injury_data["highest_risk"]), width='stretch', hide_index=True)
+    highest_risk_df = pd.DataFrame(injury_data["highest_risk"])
+    st.dataframe(highest_risk_df, width='stretch', hide_index=True)
+    csv_download_button(highest_risk_df, filename_prefix="injury_highest_risk", key="csv_injury_highest_risk")
 else:
     st.caption(t("audit.injury_footer_caption"))

@@ -6,6 +6,7 @@
 # won't have Chemistry/Pressure/Flexibility — see data_loader.py).
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -15,9 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_players_scored, available_component_columns
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.auth import require_auth
 from dashboard.notes_store import get_note, save_note
+from dashboard.report_utils import csv_download_button, build_player_profile_pdf
+from analytics.rival_benchmark import compare_to_reference  # #23
 
 st.set_page_config(page_title="Football Atlas — Player Analysis", page_icon="📊", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title("📊 Player Analysis")
 
@@ -91,6 +96,79 @@ with right:
 
 st.divider()
 
+# ── #23 — vs. International Reference ────────────────────────────────────
+# Contextual benchmarking ONLY — see analytics/rival_benchmark.py's module
+# docstring for why this is a SEPARATE radar chart on raw per-90 stats,
+# not an extra trace bolted onto the composite-sub-score radar above:
+# that radar's categories (PerformanceScore, FormScore, ...) are
+# percentiles computed relative to the 49 Morocco candidates — a rival
+# player was never in that pool, so plotting them on those exact axes
+# would be comparing incompatible things. Raw per-90 stats (goals/90,
+# tackles/90, ...) ARE comparable across any two players regardless of
+# pool, so that's what gets compared here instead — same chart TYPE and
+# visual pattern (Plotly Scatterpolar, filled radar) as above, reused
+# deliberately, just with its own category set and its own (display-only,
+# never touches DSSScore) scaling.
+st.subheader(f"🌍 {row['player_name']} vs. International Reference")
+st.caption(
+    "Contextual benchmark only — reference player data never feeds DSSScore or any "
+    "sub-score. Raw per-90 stats, not the composite scores above (not directly "
+    "comparable across pools) — see seeds/rival_reference_players.csv for who's "
+    "included and why."
+)
+
+benchmark = compare_to_reference(row, row["position"])
+
+if benchmark["warning"]:
+    st.info(f"ℹ️ {benchmark['warning']}")
+elif not benchmark["references"]:
+    st.info("No curated international reference players available for this position yet.")
+else:
+    bench_left, bench_right = st.columns([2, 1])
+    categories = benchmark["categories"]
+
+    with bench_left:
+        fig_bench = go.Figure()
+        player_values = [benchmark["player_values_scaled"][c] or 0.0 for c in categories]
+        fig_bench.add_trace(go.Scatterpolar(
+            r=player_values + [player_values[0]],
+            theta=categories + [categories[0]],
+            fill="toself",
+            name=benchmark["player_name"],
+        ))
+        for ref in benchmark["references"]:
+            ref_values = [ref["values_scaled"][c] or 0.0 for c in categories]
+            ref_label = f"{ref['name']} ({ref['nation']})" + ("" if ref["stats_verified"] else " ⚠️")
+            fig_bench.add_trace(go.Scatterpolar(
+                r=ref_values + [ref_values[0]],
+                theta=categories + [categories[0]],
+                fill="toself",
+                name=ref_label,
+                opacity=0.6 if ref["stats_verified"] else 0.35,
+            ))
+        fig_bench.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+            showlegend=True,
+            height=450,
+            margin=dict(t=30, b=30),
+        )
+        st.plotly_chart(fig_bench, width='stretch')
+
+    with bench_right:
+        st.markdown("**Reference players**")
+        for ref in benchmark["references"]:
+            verified_tag = "" if ref["stats_verified"] else " ⚠️ *stats not yet verified*"
+            st.markdown(f"- **{ref['name']}** ({ref['club']}, {ref['nation']}){verified_tag}")
+            st.caption(f"{ref['benchmark_reason']} — {ref['season']} season.")
+        if any(not ref["stats_verified"] for ref in benchmark["references"]):
+            st.warning(
+                "⚠️ One or more reference players are curated (identity/position confirmed) "
+                "but their per-90 stat VALUES have not yet been fetched/verified from a real "
+                "source — shown faded above. See seeds/rival_reference_players.csv."
+            )
+
+st.divider()
+
 # ── Comparison scatter: this player vs the rest of their position group ──
 st.subheader(f"How does {row['player_name']} compare to other {row['position']}s?")
 same_position = players[players["position"] == row["position"]].sort_values("DSSScore", ascending=False)
@@ -137,3 +215,23 @@ if existing_note and existing_note.get("text"):
     st.caption(f"🕒 Last edited by **{existing_note['author']}** at {existing_note['updated_at']} UTC")
 elif existing_note is None:
     st.caption("No note yet for this player.")
+
+st.divider()
+pdf_bytes = build_player_profile_pdf(
+    row, component_cols,
+    note_text=(existing_note.get("text") if existing_note else None),
+)
+safe_name = "".join(c if c.isalnum() else "_" for c in str(row["player_name"]))
+st.download_button(
+    "📄 Export Player PDF Profile",
+    data=pdf_bytes,
+    file_name=f"player_profile_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+    mime="application/pdf",
+    key="pdf_player_profile",
+)
+
+csv_download_button(
+    players.sort_values("DSSScore", ascending=False),
+    filename_prefix="player_analysis_candidates", key="csv_player_analysis",
+    label="⬇️ Download current candidate list (CSV)",
+)

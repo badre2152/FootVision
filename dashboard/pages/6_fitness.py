@@ -27,9 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_players_scored
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.auth import require_auth
+from dashboard.report_utils import csv_download_button
 from analytics.ml.injury_predictor import compute_injury_risk
 
 st.set_page_config(page_title="Football Atlas — Fitness & Rotation", page_icon="🩺", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title("🩺 Fitness & Rotation")
 st.caption(
@@ -125,3 +128,4 @@ st.dataframe(
     table.style.format({"InjuryRiskScore": "{:.3f}", "AvailabilityScore": "{:.3f}"}),
     width="stretch", height=450,
 )
+csv_download_button(table, filename_prefix="fitness_injury_risk", key="csv_fitness")

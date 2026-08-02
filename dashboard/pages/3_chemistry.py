@@ -18,8 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_chemistry_pairs, load_latest_players_scored
 from dashboard.sidebar import render_sidebar
+from dashboard.auth import require_auth
+from dashboard.report_utils import csv_download_button
 
 st.set_page_config(page_title="Football Atlas — Chemistry Matrix", page_icon="🔗", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title("🔗 Chemistry Matrix")
 st.caption(
@@ -76,6 +79,7 @@ top_pairs_display = top_pairs[["player_a_name", "player_b_name", "chem_per90", "
     }
 )
 st.dataframe(top_pairs_display, width='stretch', hide_index=True)
+csv_download_button(top_pairs_display, filename_prefix="chemistry_best_duos", key="csv_chemistry")
 
 # ── #19 — ChemistryScore real vs imputed transparency ──────────────────────
 # The heatmap/duos above only ever show REAL pairs (11/49 candidates) —
@@ -139,9 +143,11 @@ else:
     st.plotly_chart(fig3, width="stretch")
 
     display_cols = [c for c in ["player_name", "position", "club", "chem_avg_per90", "ChemistryScore", "chem_confidence"] if c in chem_view.columns]
+    chem_table = chem_view[display_cols].reset_index(drop=True)
     st.dataframe(
-        chem_view[display_cols].reset_index(drop=True).style.format(
+        chem_table.style.format(
             {"chem_avg_per90": "{:.3f}", "ChemistryScore": "{:.4f}"}, na_rep="—"
         ),
         width="stretch", height=450,
     )
+    csv_download_button(chem_table, filename_prefix="chemistry_real_vs_imputed", key="csv_chemistry_transparency")

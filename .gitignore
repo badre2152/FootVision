@@ -41,3 +41,8 @@ Thumbs.db
 
 # MinIO local data (docker volume)
 minio_data/
+
+# Streamlit secrets — real APP_PASSWORD lives only here, never committed
+# (spec #6, 06_authentication.md). .streamlit/secrets.toml.example stays
+# tracked as the template.
+.streamlit/secrets.toml

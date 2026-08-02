@@ -14,6 +14,109 @@ CURRENT archive. If they fail, the fix has regressed.
 
 ---
 
+## [Unreleased] — 2026-08-02
+
+### Added
+
+#### 5. Dashboard authentication / access control (`06_authentication.md`)
+- **Files:** `dashboard/auth.py` (new), `dashboard/app.py`, all 11 files in
+  `dashboard/pages/*.py`, `.streamlit/secrets.toml.example` (new, tracked),
+  `.streamlit/secrets.toml` (new, gitignored dev placeholder),
+  `.gitignore`, `tests/test_auth.py` (new).
+- **Symptom:** `grep -rln "authenticate\|login\|password" dashboard/`
+  returned zero results — the dashboard, including the interactive Squad
+  Builder page that lets anyone reachable preview/change a candidate
+  squad, had no access control at all before this session. Deployed
+  anywhere beyond localhost (Render/Railway per `README.md`, or any
+  shared network), anyone with the URL could view pre-announcement squad
+  strategy or manipulate the builder.
+- **Fix:** a single shared-password login gate, per the spec's minimal
+  viable option. Implemented as ONE centralized module
+  (`dashboard/auth.py::require_auth()`) imported and called at the top of
+  every page — app.py and all 11 files in `dashboard/pages/` — immediately
+  after `st.set_page_config()` and before `render_sidebar()` or any Gold
+  data load. **Deliberately not copy-pasted per file**, even though the
+  spec's own sample snippet is written to be duplicated into every page:
+  this project's own changelog above documents its dominant recurring
+  failure mode as logic re-typed independently in multiple places and then
+  silently drifting/reverting between sessions (see `TOP_EXPORT_COLS`,
+  entry #1 above) — applying that exact risk to the single most
+  security-sensitive piece of code in the project would have been
+  reckless. **Fails closed**: if `.streamlit/secrets.toml` is missing
+  entirely, or exists but has no `APP_PASSWORD` key, access is blocked
+  with a visible configuration error rather than silently granted — same
+  "no silent failure" principle already applied throughout this codebase
+  (see `docs/architecture.md`). The typed password is deleted from
+  `st.session_state` immediately after the comparison, not left sitting
+  around. `.streamlit/secrets.toml` (the real, gitignored file) ships with
+  a placeholder password and a comment demanding it be changed before any
+  non-localhost deployment; `.streamlit/secrets.toml.example` is the
+  tracked template.
+- **Explicitly NOT implemented (spec's own "Better version" section, out
+  of scope for this pass):** per-user credentials and an access log for
+  accountability. A single shared password gives no per-user audit trail
+  of who viewed or changed what — flagged here per this project's
+  explicit-disclosure convention, not silently left unmentioned. Needed
+  if more than one staff member requires distinguishable access.
+- **Regression found and fixed in the same session:** adding the gate
+  broke three pre-existing `AppTest`-based smoke tests that ran pages
+  without an authenticated session (`tests/test_dashboard_post_hoc_banner.py`,
+  `tests/test_final_squad_page.py`, `tests/test_player_analysis_page.py`)
+  — they now hit the login screen instead of the content they were
+  written to check. Fixed by setting
+  `at.session_state["_auth_ok"] = True` before `at.run()` in each of
+  those (8 call sites total), the same bypass a real authenticated
+  session performs. This is the correct fix, not a workaround: those
+  tests exist to check page CONTENT, and `tests/test_auth.py` (below) is
+  now the dedicated test for the gate itself.
+- **Protected by:** `tests/test_auth.py` — 17 tests: 5 unit tests on the
+  password-check logic directly (correct/wrong password, missing
+  `secrets.toml`, `secrets.toml` without the key, and a falsy/blank
+  configured password — all four "fails closed" cases), plus 12
+  `AppTest`-parametrized tests, one per real page file (`app.py` + all 11
+  `dashboard/pages/*.py`, discovered from disk so a future new page file
+  is automatically covered), each asserting the spec's literal
+  Acceptance Criterion: no exception, only the gate's own title renders,
+  zero `st.dataframe` elements, and a password field is present.
+- **Verified:** `MINIO_MOCK=1 pytest tests/test_auth.py -q` → 17 passed.
+  Full suite (`MINIO_MOCK=1 pytest tests/ -q --ignore=tests/test_sentiment_analyzer.py`)
+  → 400 passed, 9 failed — all 9 pre-existing and unrelated to this
+  change (6 already documented under "Known issues" for the 2026-08-01
+  session below; 3 newly discovered this session while re-running the
+  full suite, documented under this session's own "Known issues" below).
+  Confirmed none of the 9 involve `dashboard/auth.py`, `_auth_ok`, or
+  `session_state` in their failure output.
+- **Not verified:** a real browser session against a deployed instance
+  (Render/Railway) with a non-placeholder `APP_PASSWORD` — not possible
+  from this sandboxed environment; the placeholder password in
+  `.streamlit/secrets.toml` MUST be changed before any such deployment.
+
+### Known issues found during this session (NOT fixed — out of scope of
+### `06_authentication.md`, flagged for a future dedicated fix)
+- **`tests/test_dashboard_post_hoc_banner.py::test_post_hoc_banner_present_on_retrospective_pages[dashboard/pages/5_selection_audit.py]`**
+  fails on this archive: `No selection_audit_*.json found in gold`. This
+  test depends on a `gold/selection_audit_*.json` fixture file that isn't
+  present among the committed `gold/*.csv`/`.json` files in this delivery
+  — a missing-fixture / data-availability gap, unrelated to authentication.
+- **`tests/test_final_squad_page.py::TestFinalSquadPageSmokeTest::test_replacement_expander_is_rendered_per_selected_player`**
+  and **`::test_page_degrades_gracefully_when_top26_lacks_player_id`** both
+  fail. Root cause: these tests (written per an older `10_depth_chart.md`
+  Implementation Plan step, per the test file's own docstring) assert
+  every `st.expander` on `dashboard/pages/4_final_squad.py` is labeled
+  `"🔄 Replacement options"`. That expander no longer exists anywhere in
+  `dashboard/` (`grep -rn "Replacement options" dashboard/` → zero
+  matches) — the page's only expander today is `"📝 Coach note"`, added by
+  entry #4 (`20_coach_notes.md`) above. The "Replacement options" feature
+  was apparently removed or renamed at some point after these tests were
+  written, and the tests were never updated to match — pre-existing
+  test/implementation drift, confirmed unrelated to this session's auth
+  change (the page runs with zero exceptions; the failures are purely
+  about expander labels/counts). Deserves its own dedicated fix: either
+  the replacement-candidate feature needs re-implementing on this page, or
+  these two tests need rewriting for what the page actually does now.
+
+---
+
 ## [Unreleased] — 2026-08-01
 
 ### Fixed
@@ -289,6 +392,80 @@ CURRENT archive. If they fail, the fix has regressed.
   actual running `streamlit run dashboard/app.py` session with real
   browser reruns — both need a live manual check per the spec's own
   Acceptance Criteria wording ("verify via a quick manual check").
+
+#### 7. Rival/Opponent Player Benchmarking (`23_rival_benchmark.md`)
+- **Files:** `analytics/rival_benchmark.py` (new),
+  `seeds/rival_reference_players.csv` (new), `dashboard/pages/2_player_analysis.py`,
+  `tests/test_rival_benchmark.py` (new), `tests/test_player_analysis_page.py` (new)
+- **Symptom:** every comparison in this tool was Morocco-candidate-vs-
+  Morocco-candidate — no way to ask "is our best CB actually competitive
+  against real international-caliber opposition," exactly as the spec's
+  own `grep` check showed (zero hits for "rival"/"benchmark" anywhere in
+  `analytics/` or `dashboard/`).
+- **Curation decision (spec's own Implementation Plan step 1 — explicitly
+  a product decision, not purely technical):** 3 reference players from
+  **Brazil** — Morocco's confirmed real Group C opponent (13 June 2026,
+  MetLife Stadium), verified via web search against FIFA's own squad
+  announcement — covering the spec's explicit minimum (GK, CB, ST):
+  Alisson Becker (GK, Liverpool), Marquinhos (CB, PSG), Vinícius Júnior
+  (FWD/ST — confirmed moved from left wing to central striker for this
+  cycle per manager Carlo Ancelotti). This is a stronger, more defensible
+  rationale than an arbitrary "best players in the world" pick — every
+  one of these three is a player Morocco's squad will literally face.
+- **⚠️ Known gap, disclosed rather than papered over:** the per-90 STAT
+  VALUES for these 3 curated players are **not yet populated** —
+  `stats_verified=False` for all 3 in `seeds/rival_reference_players.csv`,
+  numeric columns blank. Precise per-90 numbers (Tkl_per90, GA_per90,
+  etc., matching this project's own exact stat definitions) need a real
+  FBref fetch to get right; approximating them from search-snippet
+  percentages/rankings found during this session risked presenting
+  plausible-looking but WRONG numbers as fact in a graduation project —
+  worse than a visible gap. `compare_to_reference()` and the dashboard
+  both surface `stats_verified` explicitly (faded radar trace + ⚠️ label
+  + warning box) rather than silently plotting placeholder zeros as if
+  real, following the exact same "flag it, don't hide it" pattern
+  already established for `chem_is_real` (#19) and `is_pre_cutoff_fix`
+  (#18) in this same codebase. **Next step for a real run:** populate the
+  9 blank per-90 cells in `seeds/rival_reference_players.csv` from FBref
+  for the 2024-2025 season (already set as `season_end_date`, safely
+  pre-`DECISION_DATE`), then flip `stats_verified` to `True`.
+- **Design decision — separate radar chart, not an added trace on the
+  existing one:** the spec's Technical Requirements literally say "same
+  visualization, additional trace for the reference player," but the
+  existing Player Analysis radar plots `PerformanceScore`/`FormScore`/etc.
+  — percentiles computed relative to the 49 Morocco candidates
+  specifically (`percentile_score.py`). A rival player was never in that
+  pool, so a trace on those exact axes would be comparing incompatible
+  things. Built as a second, separate `go.Scatterpolar` radar instead —
+  same chart TYPE and visual pattern, reused deliberately — plotting raw
+  per-90 stat categories (`Gls_per90`, `Tkl_per90`, `GA_per90`, ...) that
+  ARE comparable across any two players regardless of pool. Scaling for
+  this chart is a fresh per-category min-max computed only across
+  {this candidate, these references} — explicitly NOT the Morocco-pool
+  normalization that feeds `DSSScore`, per the spec's Functional
+  Requirement #3 (never feed this into scoring).
+- **`DECISION_DATE` compliance (Functional Requirement #2):** every
+  reference player's `season_end_date` (2025-05-25 for all 3, the
+  2024-2025 European season) is asserted `< config.DECISION_DATE`
+  (2026-05-25) by a dedicated test.
+- **Merged 2026-08-02 with this session's separately-delivered spec `#12`
+  (CSV/PDF export, `dashboard/report_utils.py`) — that work landed on
+  `2_player_analysis.py` (the PDF/CSV export buttons at the bottom of the
+  page) in parallel with this one. No conflict: this section was inserted
+  above the export buttons; `build_player_profile_pdf()` was NOT modified
+  to include the benchmark section (out of scope for spec #23) — flagged
+  here as a natural follow-up if a coach wants the international
+  reference comparison in the exported PDF too.**
+- **Protected by:** `tests/test_rival_benchmark.py` (13 tests — position
+  filtering, the GA_per90 inversion actually inverting, missing stats
+  scaling to `None` not `0`, `stats_verified` surfacing correctly, and
+  the `DECISION_DATE` compliance check above) and
+  `tests/test_player_analysis_page.py` (3 AppTest smoke tests — this
+  page had ZERO smoke-test coverage before this change, added given how
+  much new UI landed on it). Re-ran the FULL suite after merging with
+  spec `#12`'s changes: identical 9 pre-existing failures before and
+  after (none new, none fixed) — confirmed via a clean pre-merge archive
+  copy, same method used throughout this session.
 
 ### Known issues found during this session (NOT fixed — out of scope of
 ### `03_regression_protection.md`, flagged for a future dedicated fix)

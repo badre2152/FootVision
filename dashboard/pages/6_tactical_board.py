@@ -24,9 +24,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dashboard.data_loader import load_latest_top26
 from dashboard.sidebar import render_sidebar
+from dashboard.auth import require_auth
+from dashboard.report_utils import csv_download_button
 from dashboard.pitch_renderer import FORMATIONS, assign_xi_to_formation, render_pitch, PLAYER_PHOTOS_DIR
 
 st.set_page_config(page_title="Football Atlas — Tactical Board", page_icon="🧭", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title("🧭 Tactical Board")
 
@@ -114,4 +117,6 @@ with col_right:
 st.divider()
 st.subheader("XI details")
 show_cols = [c for c in ["player_name", "position", "DSSScore", "AvailabilityScore", "PlayerDNA"] if c in xi_df.columns]
-st.dataframe(xi_df[show_cols].sort_values("position"), width='stretch', hide_index=True)
+xi_display = xi_df[show_cols].sort_values("position")
+st.dataframe(xi_display, width='stretch', hide_index=True)
+csv_download_button(xi_display, filename_prefix="tactical_board_xi", key="csv_tactical_board")

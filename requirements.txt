@@ -34,6 +34,7 @@ pytest
 # ── Dashboard (added 2026-07-14) ────────────────────────────────────────────────
 streamlit
 plotly
+reportlab                   # ← مضافة (PDF export, spec #12)
 praw
 google-api-python-client
 langdetect

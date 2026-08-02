@@ -26,6 +26,8 @@ from dashboard.data_loader import (
 )
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
 from dashboard.i18n import t
+from dashboard.report_utils import csv_download_button
+from dashboard.auth import require_auth
 
 st.set_page_config(
     page_title="Football Atlas — Executive Dashboard",
@@ -33,6 +35,7 @@ st.set_page_config(
     layout="wide",
 )
 
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 
 st.title(t("nav.app_title"))
@@ -136,6 +139,7 @@ else:
         width='stretch',
         hide_index=True,
     )
+    csv_download_button(top26_filtered[display_cols], filename_prefix="squad_overview", key="csv_app_overview")
 
 missing_new_cols = [c for c in ["ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore", "DSSScore_pct"] if c not in top26.columns]
 if missing_new_cols:

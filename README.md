@@ -149,6 +149,12 @@ between the two).
 documented as **untested end-to-end against live services** — expect it to
 be the sparsest, least-proven component until real runs establish coverage.
 
+📖 What every one of the 214 columns in `players_scored.csv` actually means,
+where it comes from, and how well-covered it is: see
+[`docs/data_dictionary.md`](docs/data_dictionary.md) (generated —
+regenerate with `python scripts/generate_data_dictionary.py` after any
+column change, don't hand-edit it).
+
 ### Decision-support modules (on top of Gold)
 
 | Module | Entry point | Nature |

@@ -42,10 +42,47 @@
 # a per-row basis, bypassing the globally-precomputed *_norm columns from
 # normalize_all() (which run before league adjustment can be applied and
 # therefore cannot reflect it).
+#
+# ── SOURCE-PRIORITY UPDATE (#14 — 2026-08-02) ──────────────────────────────
+# get_league_factor() (and therefore adjust_stat_for_league() /
+# adjust_gk_ga_per90(), which both call it) now resolves the coefficient
+# via a 3-tier COALESCE-style priority chain, same convention as
+# ingestion/silver_pipeline.py's COALESCE_CHAINS:
+#
+#   1. compute_elo_based_coefficient() — REAL ClubElo ratings, read from the
+#      Bronze artifact ingestion/loaders/clubelo_loader.py already produces
+#      (s3://football-bronze/clubelo/clubelo_{DECISION_DATE}.json), i.e. the
+#      SAME snapshot date the rest of the live pipeline is pinned to
+#      (config.DECISION_DATE) — never a live/"today" ClubElo pull.
+#   2. LEAGUE_DIFFICULTY (below) — the original hand-estimated table.
+#   3. LEAGUE_DIFFICULTY["_default"] — last resort.
+#
+# HONEST COVERAGE NOTE: ClubElo's tracked competitions do NOT include
+# Botola Pro, Saudi Pro League, Egyptian Premier League, UAE Pro League, or
+# Super League Greece (confirmed live via diagnose_clubelo_coverage.py,
+# 2026-07-22 — zero matches, not a naming/matching bug). Those five leagues
+# will ALWAYS fall through to tier 2 (the manual table) or tier 3, no matter
+# how current the ClubElo Bronze snapshot is. This module does not — and
+# cannot — claim full data-driven coverage; only Big-5 / European leagues
+# ClubElo actually tracks are traceable to real Elo numbers.
 
 import logging
+from datetime import date
 
 logger = logging.getLogger(__name__)
+
+# Must match ingestion/loaders/clubelo_loader.py's BUCKET / OBJECT_PATH —
+# kept as separate literals here (rather than importing clubelo_loader) to
+# avoid a heavier import chain (minio client, requests, etc.) just to read
+# league_quality.py's coefficients.
+_CLUBELO_BUCKET = "football-bronze"
+_CLUBELO_PREFIX_TEMPLATE = "clubelo/clubelo_{date}"
+
+# Per-process cache: {date_str: snapshot_dict_or_None}. A full Gold run
+# calls get_league_factor() once per player per stat (hundreds of calls),
+# all for the same DECISION_DATE snapshot — no reason to hit MinIO/disk
+# every time.
+_ELO_SNAPSHOT_CACHE: dict[str, dict | None] = {}
 
 # ── League difficulty coefficients ────────────────────────────────────────────
 # 1.00 = Big-5 level (Premier League, La Liga, Bundesliga, Serie A, Ligue 1)
@@ -81,13 +118,121 @@ LEAGUE_DIFFICULTY: dict[str, float] = {
 }
 
 
-def get_league_factor(league: str | None) -> float:
+def _resolve_as_of_date(as_of_date: "date | str | None") -> date:
     """
-    Returns the difficulty coefficient for a given league name.
-    Falls back to _default if the league is not in the table.
+    يحوّل as_of_date لـ date object، ويرجع config.DECISION_DATE كـ default —
+    نفس مبدأ التوقيت المستعمل فـ clubelo_loader.load_clubelo_bronze()
+    (01_temporal_cutoff.md): القطعة الزمنية لازم تكون DECISION_DATE، ماشي
+    date.today()، حتى ما تتسربش بيانات بعد تاريخ القرار.
+    """
+    if as_of_date is None:
+        from config import DECISION_DATE
+        return DECISION_DATE
+    if isinstance(as_of_date, str):
+        return date.fromisoformat(as_of_date)
+    return as_of_date
+
+
+def _load_elo_snapshot(as_of_date: date) -> dict | None:
+    """
+    يقرأ artifact الـ ClubElo (Bronze) اللي كتبو clubelo_loader.py لتاريخ
+    محدد بالضبط — ماشي "آخر واحد موجود" (read_latest_json عادةً كترجع
+    آخر object بالاسم، وهذا ممكن يكون بعد DECISION_DATE إذا تعاود تشغيل
+    الـ loader فتواريخ لاحقة). كنبنيو prefix يطابق فقط ملف هاد التاريخ.
+
+    Cached بـ date_str باش ما نكرّروش القراءة لكل لاعب/لكل statistic.
+    """
+    date_str = as_of_date.strftime("%Y%m%d")
+    if date_str in _ELO_SNAPSHOT_CACHE:
+        return _ELO_SNAPSHOT_CACHE[date_str]
+
+    from clients.minio_client import read_latest_json
+
+    prefix = _CLUBELO_PREFIX_TEMPLATE.format(date=date_str)
+    snapshot = read_latest_json(bucket=_CLUBELO_BUCKET, prefix=prefix)
+    if not snapshot:
+        logger.debug(
+            "ClubElo: no Bronze snapshot found for %s (prefix='%s') — "
+            "Elo-based coefficients unavailable for this run, falling back "
+            "to the manual LEAGUE_DIFFICULTY table.",
+            date_str, prefix,
+        )
+    _ELO_SNAPSHOT_CACHE[date_str] = snapshot
+    return snapshot
+
+
+def compute_elo_based_coefficient(
+    league_name: str | None,
+    as_of_date: "date | str | None" = None,
+) -> float | None:
+    """
+    الطبقة الأولى (الأولوية القصوى) فـ سلسلة get_league_factor(): تحاول
+    ترجع difficulty coefficient حقيقي مبني على ClubElo، مقروء من الـ Bronze
+    artifact اللي كيكتبو ingestion/loaders/clubelo_loader.py (عبر
+    load_clubelo_bronze() → build_league_quality_from_elo()).
+
+    يحترم DECISION_DATE (spec #1): as_of_date كيتحدد افتراضياً بـ
+    config.DECISION_DATE، ماشي بتاريخ اليوم الحقيقي — نفس الـ snapshot
+    اللي باقي pipeline مبني عليه.
 
     Args:
-        league: League name string (as stored in Silver 'league' column).
+        league_name: اسم الدوري (عمود Silver 'league').
+        as_of_date:  date أو ISO string أو None (→ config.DECISION_DATE).
+
+    Returns:
+        float coefficient إذا الدوري موجود فـ الـ Elo snapshot المطابق
+        لهاد التاريخ، وإلا None (الدوري ماشي مغطى بـ ClubElo — Botola
+        Pro، Saudi Pro League، Egyptian Premier League، UAE Pro League،
+        و Super League Greece كلهم بلا تغطية ClubElo إطلاقاً، انظر
+        docstring الملف فوق).
+    """
+    if not league_name or not isinstance(league_name, str):
+        return None
+
+    resolved_date = _resolve_as_of_date(as_of_date)
+    snapshot = _load_elo_snapshot(resolved_date)
+    if not snapshot:
+        return None
+
+    difficulty = snapshot.get("difficulty_by_league", {})
+    if not difficulty:
+        return None
+
+    # Exact match first
+    if league_name in difficulty:
+        return float(difficulty[league_name])
+
+    # Case-insensitive exact match (ClubElo snapshot keys come from the
+    # same seed_df 'league' column as LEAGUE_DIFFICULTY, so an exact match
+    # is the expected common case — no fuzzy substring matching here on
+    # purpose, to avoid silently attributing the wrong league's real Elo
+    # number the way a substring match could).
+    league_lower = league_name.lower()
+    for key, val in difficulty.items():
+        if key.lower() == league_lower:
+            return float(val)
+
+    return None
+
+
+def get_league_factor(league: str | None, as_of_date: "date | str | None" = None) -> float:
+    """
+    Returns the difficulty coefficient for a given league name, via a
+    3-tier COALESCE-style priority chain (see module header, #14):
+
+        1. compute_elo_based_coefficient() — real ClubElo data, if the
+           league is covered by ClubElo's tracked competitions AND a
+           Bronze snapshot exists for `as_of_date` (defaults to
+           config.DECISION_DATE).
+        2. LEAGUE_DIFFICULTY table (hand-estimated, exact then partial
+           match) — used whenever tier 1 returns nothing.
+        3. LEAGUE_DIFFICULTY["_default"] — last resort.
+
+    Args:
+        league:    League name string (as stored in Silver 'league' column).
+        as_of_date: Optional date/ISO-string for the ClubElo snapshot to
+                    read (tier 1 only). Defaults to config.DECISION_DATE —
+                    pass this explicitly only for testing/backtesting.
 
     Returns:
         Float coefficient in (0, 1]. 1.0 = Big-5 baseline.
@@ -95,11 +240,20 @@ def get_league_factor(league: str | None) -> float:
     if not league or not isinstance(league, str):
         return LEAGUE_DIFFICULTY["_default"]
 
-    # Exact match first
+    # ── Tier 1: real ClubElo-derived coefficient ────────────────────────
+    elo_factor = compute_elo_based_coefficient(league, as_of_date)
+    if elo_factor is not None:
+        logger.debug(
+            "League factor (Elo-based): '%s' -> %.3f (ClubElo snapshot)",
+            league, elo_factor,
+        )
+        return elo_factor
+
+    # ── Tier 2: manual hand-estimated table — exact match ───────────────
     if league in LEAGUE_DIFFICULTY:
         return LEAGUE_DIFFICULTY[league]
 
-    # Partial match (case-insensitive) for slightly different names
+    # ── Tier 2b: manual table — partial match (case-insensitive) ────────
     league_lower = league.lower()
     for key, val in LEAGUE_DIFFICULTY.items():
         if key.startswith("_"):
@@ -108,9 +262,10 @@ def get_league_factor(league: str | None) -> float:
             logger.debug("League partial match: '%s' -> '%s' (factor=%.2f)", league, key, val)
             return val
 
+    # ── Tier 3: documented default ───────────────────────────────────────
     logger.warning(
         "Unknown league '%s' — using default factor %.2f. "
-        "Add to LEAGUE_DIFFICULTY in league_quality.py.",
+        "Not covered by ClubElo and not in LEAGUE_DIFFICULTY in league_quality.py.",
         league,
         LEAGUE_DIFFICULTY["_default"],
     )

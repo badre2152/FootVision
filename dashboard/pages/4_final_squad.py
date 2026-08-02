@@ -10,6 +10,7 @@
 # language switcher (EN/FR/AR).
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -21,12 +22,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import config
 from dashboard.data_loader import load_latest_top26, load_latest_players_scored, available_component_columns
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.auth import require_auth
 from dashboard.i18n import t
 from dashboard.notes_store import get_all_notes
+from dashboard.report_utils import csv_download_button, build_final_squad_pdf
 from analytics.ml.player_clustering import ARCHETYPE_EMOJI  # NEW 2026-07-29
 from analytics.squad_balance import compute_age_distribution, TIER_ORDER, UNKNOWN_TIER  # #16
 
 st.set_page_config(page_title="Football Atlas — Final Squad", page_icon="🏆", layout="wide")
+require_auth()  # spec #6 — must run before render_sidebar()/any data load below
 render_sidebar()
 st.title(t("nav.final_squad_title"))
 
@@ -41,6 +45,28 @@ if top26.empty:
     st.stop()
 
 component_cols = available_component_columns(top26)
+
+# ── Export (spec #12) ──────────────────────────────────────────────────
+filters_applied = len(top26) != len(top26_full)
+exp_col1, exp_col2 = st.columns(2)
+with exp_col1:
+    csv_download_button(top26, filename_prefix="final_squad", key="csv_final_squad")
+with exp_col2:
+    pdf_bytes = build_final_squad_pdf(
+        top26, component_cols,
+        source_file=top26_full.attrs.get("source_file"),
+        filters_applied=filters_applied,
+    )
+    st.download_button(
+        t("export.pdf_button"),
+        data=pdf_bytes,
+        file_name=f"final_squad_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+        mime="application/pdf",
+        key="pdf_final_squad",
+    )
+st.caption(t("export.pdf_lang_note"))
+if filters_applied:
+    st.caption(t("export.filtered_note"))
 
 # #20 — Coach/Staff Notes, compact read-only view. Loaded ONCE for all 26
 # players (not once per row) since notes_store.get_all_notes() reads the
@@ -209,4 +235,6 @@ else:
             if avg is not None
         ]
         if caps_rows:
-            st.dataframe(pd.DataFrame(caps_rows), width='stretch', hide_index=True)
+            caps_df = pd.DataFrame(caps_rows)
+            st.dataframe(caps_df, width='stretch', hide_index=True)
+            csv_download_button(caps_df, filename_prefix="age_balance_avg_caps", key="csv_age_balance_caps")
