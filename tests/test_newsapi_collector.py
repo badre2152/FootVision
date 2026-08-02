@@ -115,6 +115,31 @@ class TestCollectPlayerArticles:
         assert "football" in call_kwargs["params"]["q"]
         assert call_kwargs["params"]["apiKey"] == "my-key"
 
+    def test_temporal_cutoff_to_param_defaults_to_decision_date(self):
+        """
+        TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): before this fix, this
+        request had NO date bound at all — a live run could pull in
+        coverage from any point in time, including well after the actual
+        decision date, straight into SentimentScore. Confirms `to` is now
+        always sent, defaulting to config.DECISION_DATE.
+        """
+        from config import DECISION_DATE
+
+        mock_resp = _make_ok_response([])
+        with patch("ingestion.loaders.newsapi_collector.requests.get", return_value=mock_resp) as mock_get:
+            _collect_player_articles("my-key", "Youssef En-Nesyri")
+
+        assert mock_get.call_args.kwargs["params"]["to"] == DECISION_DATE.isoformat()
+
+    def test_temporal_cutoff_to_param_respects_explicit_as_of(self):
+        from datetime import date
+
+        mock_resp = _make_ok_response([])
+        with patch("ingestion.loaders.newsapi_collector.requests.get", return_value=mock_resp) as mock_get:
+            _collect_player_articles("my-key", "Youssef En-Nesyri", as_of=date(2026, 1, 1))
+
+        assert mock_get.call_args.kwargs["params"]["to"] == "2026-01-01"
+
 
 class TestLoadNewsapiBronze:
 

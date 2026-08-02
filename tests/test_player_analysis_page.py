@@ -55,9 +55,7 @@ class TestPlayerAnalysisPageSmokeTest:
     def test_page_runs_without_exception(self, gold_snapshot):
         _write_players_scored(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
-        # spec #6 (06_authentication.md) login gate — bypass exactly like a
-        # real authenticated session, this test checks page CONTENT.
-        at.session_state["_auth_ok"] = True
+        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
         at.run()
         assert not at.exception, f"Page raised: {[str(e) for e in at.exception]}"
 
@@ -67,9 +65,7 @@ class TestPlayerAnalysisPageSmokeTest:
         the warning) for a position that HAS curated references (GK)."""
         _write_players_scored(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
-        # spec #6 (06_authentication.md) login gate — bypass exactly like a
-        # real authenticated session, this test checks page CONTENT.
-        at.session_state["_auth_ok"] = True
+        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
         at.run()
         assert not at.exception
 
@@ -80,9 +76,7 @@ class TestPlayerAnalysisPageSmokeTest:
 
     def test_no_gold_output_shows_error_and_stops_cleanly(self, gold_snapshot):
         at = AppTest.from_file(PAGE_PATH)
-        # spec #6 (06_authentication.md) login gate — bypass exactly like a
-        # real authenticated session, this test checks page CONTENT.
-        at.session_state["_auth_ok"] = True
+        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
         at.run()
         assert not at.exception
         assert any("No Gold output found" in e.value for e in at.error)

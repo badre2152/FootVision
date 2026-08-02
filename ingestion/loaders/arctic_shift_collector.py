@@ -64,25 +64,36 @@ REQUEST_TIMEOUT_SECONDS = 15
 POLITE_DELAY_SECONDS = 0.5  # between requests, to be a considerate free-service user
 
 
-def _search_posts(subreddit: str, query: str) -> list[dict]:
+def _search_posts(subreddit: str, query: str, before_ts: int | None = None) -> list[dict]:
     """
     Searches one subreddit for `query` using Arctic Shift's
     /api/posts/search endpoint. No auth needed.
+
+    Args:
+        before_ts: TEMPORAL CUTOFF FIX (01_temporal_cutoff.md) — Unix
+            timestamp (seconds) passed as Arctic Shift's `before` param.
+            Without this, this collector had ZERO date bound at all, so
+            a live run could pull in Reddit posts from any time,
+            including well after the actual decision date, straight into
+            SentimentScore.
 
     Returns a list of raw post dicts (Arctic Shift's native Reddit post
     schema — same shape as PRAW/the official API would return) or an
     empty list on any failure.
     """
+    params = {
+        "subreddit": subreddit,
+        "query": query,
+        "limit": MAX_POSTS_PER_SUBREDDIT,
+        "sort": "desc",
+        "fields": "title,selftext,id,num_comments",
+    }
+    if before_ts is not None:
+        params["before"] = before_ts  # TEMPORAL CUTOFF FIX
     try:
         resp = requests.get(
             f"{BASE_URL}/api/posts/search",
-            params={
-                "subreddit": subreddit,
-                "query": query,
-                "limit": MAX_POSTS_PER_SUBREDDIT,
-                "sort": "desc",
-                "fields": "title,selftext,id,num_comments",
-            },
+            params=params,
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         resp.raise_for_status()
@@ -97,20 +108,30 @@ def _search_posts(subreddit: str, query: str) -> list[dict]:
     return data.get("data", [])
 
 
-def _search_comments(post_id: str) -> list[dict]:
+def _search_comments(post_id: str, before_ts: int | None = None) -> list[dict]:
     """
     Fetches top comments for a post via /api/comments/search, filtered by
     link_id. No auth needed. Requests "author" too (needed to filter out
     AutoModerator/bot noise — see _is_bot_or_removed_text()).
+
+    Args:
+        before_ts: TEMPORAL CUTOFF FIX (01_temporal_cutoff.md). A post
+            that predates the cutoff can still pick up NEW comments after
+            it — this bounds comment fetch time the same way _search_posts()
+            bounds post fetch time, so a stale-but-still-open thread can't
+            leak post-cutoff sentiment in through its comment section.
     """
+    params = {
+        "link_id": post_id,
+        "limit": MAX_COMMENTS_PER_POST,
+        "fields": "body,author",
+    }
+    if before_ts is not None:
+        params["before"] = before_ts  # TEMPORAL CUTOFF FIX
     try:
         resp = requests.get(
             f"{BASE_URL}/api/comments/search",
-            params={
-                "link_id": post_id,
-                "limit": MAX_COMMENTS_PER_POST,
-                "fields": "body,author",
-            },
+            params=params,
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         resp.raise_for_status()
@@ -146,7 +167,7 @@ def _is_bot_or_removed(text: str, author: str | None) -> bool:
 # the exact same fix independently — see _bronze_utils.py's docstring).
 
 
-def _collect_player_texts(player_name: str) -> list[str]:
+def _collect_player_texts(player_name: str, as_of: "date | None" = None) -> list[str]:
     """
     Searches all SUBREDDITS for `player_name`, collecting post titles +
     selftext (always relevant — they came directly from a name-matched
@@ -154,11 +175,25 @@ def _collect_player_texts(player_name: str) -> list[str]:
     mention the player by name (or surname) — see _mentions_player() for
     why this filter was added after live testing surfaced irrelevant
     megathread comments in real results.
+
+    Args:
+        as_of: TEMPORAL CUTOFF FIX (01_temporal_cutoff.md). Defaults to
+            config.DECISION_DATE. Converted to a Unix timestamp (end of
+            that day, UTC) and passed as `before` to both the post and
+            comment searches, so nothing dated after the decision date —
+            including new comments on an old, still-open post — can leak
+            into SentimentScore.
     """
+    if as_of is None:
+        from config import DECISION_DATE
+        as_of = DECISION_DATE
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    before_ts = int((_dt.combine(as_of, _dt.min.time(), tzinfo=_tz.utc) + _td(days=1)).timestamp())
+
     texts: list[str] = []
 
     for subreddit in SUBREDDITS:
-        posts = _search_posts(subreddit, player_name)
+        posts = _search_posts(subreddit, player_name, before_ts=before_ts)
         time.sleep(POLITE_DELAY_SECONDS)
 
         for post in posts:
@@ -180,7 +215,7 @@ def _collect_player_texts(player_name: str) -> list[str]:
                 texts.append(selftext)
 
             if post_id and post.get("num_comments", 0) > 0:
-                comments = _search_comments(post_id)
+                comments = _search_comments(post_id, before_ts=before_ts)
                 time.sleep(POLITE_DELAY_SECONDS)
                 for comment in comments:
                     body = comment.get("body")
@@ -199,7 +234,7 @@ def _collect_player_texts(player_name: str) -> list[str]:
     return texts
 
 
-def load_arctic_shift_bronze(seed_df: pd.DataFrame, run_date: str = "") -> str:
+def load_arctic_shift_bronze(seed_df: pd.DataFrame, run_date: str = "", as_of: "date | None" = None) -> str:
     """
     Collects raw text mentioning each of the 49 candidates from Reddit via
     Arctic Shift (no auth needed), for downstream sentiment scoring.
@@ -212,6 +247,9 @@ def load_arctic_shift_bronze(seed_df: pd.DataFrame, run_date: str = "") -> str:
     Args:
         seed_df:  Must contain columns: player_id, player_name
         run_date: Timestamp string; auto-generated if empty
+        as_of: TEMPORAL CUTOFF FIX (01_temporal_cutoff.md) — decision-date
+            cutoff passed through to _collect_player_texts(). Defaults to
+            config.DECISION_DATE.
 
     Returns:
         Status string, e.g. "OK (14/49 players with data)"
@@ -219,12 +257,16 @@ def load_arctic_shift_bronze(seed_df: pd.DataFrame, run_date: str = "") -> str:
     if not run_date:
         run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    if as_of is None:
+        from config import DECISION_DATE
+        as_of = DECISION_DATE
+
     validate_seed_columns(seed_df, ["player_id", "player_name"], source="arctic_shift")
 
     records = []
     for _, row in seed_df.iterrows():
         try:
-            texts = _collect_player_texts(row["player_name"])
+            texts = _collect_player_texts(row["player_name"], as_of=as_of)
         except Exception as e:
             logger.debug("Arctic Shift collection failed for %s: %s", row["player_name"], e)
             texts = []

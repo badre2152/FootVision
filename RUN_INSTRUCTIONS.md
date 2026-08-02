@@ -1,131 +1,179 @@
 # RUN_INSTRUCTIONS.md — Football Atlas
-**Last updated:** July 21, 2026 — after the full Chemistry/Pressure/Flexibility session
+**Last updated:** August 3, 2026 — synced with `README.md` and `Makefile`
+(previous version, dated July 21, 2026, predated the `DECISION_DATE`
+enforcement, the ML decision-support modules, dashboard authentication, and
+7 of the current 11 dashboard pages — do not trust anything from a copy of
+this file older than this date; diff against `Makefile`'s `help` target if
+in doubt).
 
-Single reference for running the whole pipeline. Every command below has
-been run for real (by the project owner, on Windows/PowerShell) at least
-once during this session — this isn't theoretical.
+Single reference for running the whole pipeline, kept intentionally short —
+`README.md` has the full architectural picture and the `DECISION_DATE`
+explanation; this file is the command sequence only.
+
+---
+
+## 0. The one thing to know before running anything
+
+Every live-path run (`run_bronze.py`, `run_sd_extractor.py`,
+`run_fotmob.py`, `run_sofifa.py`, `run_gold.py`) is dated against
+`config.DECISION_DATE` (`2026-05-25`) unless you pass `--as-of
+YYYY-MM-DD` explicitly. `run_injury_predictor.py` uses `--reference-date`
+instead. **Do not change `DECISION_DATE` to anything on/after
+2026-05-26** (the real WC2026 squad announcement) — see `README.md`'s
+top section for why. If you only remember one thing from this file, make
+it this.
 
 ---
 
 ## 1. Setup
 
-```powershell
-pip install -r requirements.txt
+```bash
+make install
+# or: pip install -r requirements.txt --break-system-packages
 ```
 
-`.env` should already exist in the project root (MinIO + API_FOOTBALL_KEY).
-If missing, see `.env` delivered earlier this session — but consider
-rotating `API_FOOTBALL_KEY` if this repo is ever made public, since it was
-pasted in plain text during this conversation.
+`.env` should already exist in the project root (MinIO + `API_FOOTBALL_KEY`).
+Rotate `API_FOOTBALL_KEY` before making this repo public.
 
 ---
 
-## 2. Bronze — full run
+## 2. Bronze
 
-```powershell
-python run_bronze.py
+```bash
+make bronze              # 11 in-script sources (run_bronze.py)
+make bronze-sd-extractor # REQUIRED before silver — extracts sd_* columns; run FIRST
+make bronze-fotmob       # standalone — run AFTER bronze-sd-extractor
+make bronze-sofifa       # standalone, Playwright — needs: playwright install chromium
 ```
 
-⚠️ **This does NOT cover everything.** Three sources need separate manual
-scripts — easy to forget, not mentioned anywhere else in the codebase's
-own docs:
+Order matters for the three standalone scripts:
+**bronze-sd-extractor → bronze-fotmob → bronze-sofifa.**
+None of the three take `DECISION_DATE` from the Makefile's variable
+automatically for `ml-injury`-style overriding on the command line — they
+each default to `config.DECISION_DATE` internally; pass `--as-of` directly
+to the underlying script if you need a different date for a one-off run:
 
-```powershell
-python run_sd_extractor.py      # SofaScore detail extraction
-python run_fotmob.py            # Fotmob (run AFTER run_sd_extractor.py)
-python run_sofifa.py            # SoFIFA (Playwright — needs: playwright install chromium)
+```bash
+python run_sd_extractor.py --as-of 2026-05-25
+python run_fotmob.py --as-of 2026-05-25
+python run_sofifa.py --as-of 2026-05-25
 ```
 
 ### Running a single source only (faster iteration)
-`run_bronze.py`'s actual flags (confirmed from its own `--help` output):
+
+```bash
+make bronze-fast   # skips Understat + SofaScore + StatsBomb + Wikidata
+make bronze-test   # 3 players, filesystem mock, fail-fast
 ```
---skip-wikidata --skip-statsbomb --skip-fbref --skip-transfermarkt
---skip-understat --skip-sofascore --skip-sofascore-detail --skip-injury
---skip-intl --skip-flashscore --skip-club-stats-csv --only-flashscore
---limit LIMIT --fail-fast
-```
-Example — StatsBomb only:
-```powershell
-python run_bronze.py --skip-wikidata --skip-fbref --skip-transfermarkt --skip-understat --skip-sofascore --skip-sofascore-detail --skip-injury --skip-intl --skip-flashscore --skip-club-stats-csv
-```
-Example — Transfermarkt only:
-```powershell
-python run_bronze.py --skip-wikidata --skip-statsbomb --skip-fbref --skip-understat --skip-sofascore --skip-sofascore-detail --skip-flashscore --skip-club-stats-csv --skip-intl --skip-injury
-```
+
+Or call `run_bronze.py` directly with any combination of `--skip-*` flags
+(`python run_bronze.py --help` for the full, current list — the flags
+themselves are the source of truth, not this file).
 
 ---
 
 ## 3. Silver
 
-```powershell
-python run_silver.py
+```bash
+make silver
 ```
 
-Watch the coverage report at the end and any `WARNING` lines — especially
-`tm_num_positions: N/49 players defaulted to 1 (TM fetch failed)`, which
-tells you how many players the Transfermarkt secondary-position selector
-actually reached (some failures are normal — timeouts, missing profiles).
+Watch the coverage report and any `WARNING` lines at the end.
 
 ---
 
-## 4. Gold — scoring (7-8 components)
+## 4. Gold — scoring (9 components)
 
-```powershell
-python run_gold.py --top-n 26
+```bash
+make gold   # python run_gold.py --top-n 26
 ```
 
-Note: `run_gold.py` rebuilds its OWN Silver internally from whatever's
-currently in MinIO Bronze (Step 1/5 in its logs) — it does not reuse your
-last local `run_silver.py` output directly, though the result should be
-identical if nothing changed in Bronze between the two runs.
+`run_gold.py` rebuilds its own Silver internally from whatever's currently
+in MinIO Bronze — it does not require a prior local `make silver` run,
+though results should match if Bronze hasn't changed between the two.
+Optional: `--use-clubelo` to replace the hardcoded league-difficulty table
+with live ClubElo ratings (untested from network-restricted environments —
+verify GK rankings after your first run).
 
 ### Quick sanity checks after a run
-```powershell
-# Chemistry coverage (should be 49/49, ~11 real)
-python -c "import pandas as pd; df = pd.read_parquet('silver/players_silver_latest.parquet'); print(df['chem_avg_per90'].notna().sum(), '/', len(df))"
 
-# Flexibility distribution (should show real 1/2/3 spread, not one constant)
-python -c "import pandas as pd; df = pd.read_parquet('silver/players_silver_latest.parquet'); print(df['tm_num_positions'].value_counts().sort_index())"
-
+```bash
 # Squad position cap (should always be GK=3, DEF=9, MID=9, FWD=5)
-python -c "import pandas as pd; df = pd.read_csv(sorted(__import__('glob').glob('gold/top26_*.csv'))[-1]); print(df['position'].value_counts())"
+python -c "import pandas as pd, glob; df = pd.read_csv(sorted(glob.glob('gold/top26_*.csv'))[-1]); print(df['position'].value_counts())"
+
+# DECISION_DATE compliance spot-check (injury data should never be dated after the cutoff)
+python -c "import pandas as pd; df = pd.read_parquet('silver/players_silver_latest.parquet'); print(pd.to_datetime(df['inj_last_date'], errors='coerce').max())"
 ```
 
 ---
 
-## 5. Tests
+## 5. Decision-support modules (on top of Gold)
 
-```powershell
-python -m pytest tests/test_gold2_components.py -v
+```bash
+make ml-dna              # Player DNA — K-Means clustering
+make ml-injury           # Injury Risk Index (--reference-date, defaults to DECISION_DATE)
+make ml-selection-audit  # Selection Audit vs. the real 2026 squad (LOOCV logistic regression)
+make ml-rotation         # Rotation Strategy (group-stage)
 ```
-16 tests — covers ChemistryScore, PressureIndex, FlexibilityScore,
-percentile_score.py's rank-preservation contract, the minutes_filter
-weight-binding regression, and the squad_summary position-cap regression.
+
+To override the reference date for `ml-injury` specifically:
+
+```bash
+make ml-injury DECISION_DATE=2026-11-01
+```
 
 ---
 
 ## 6. Dashboard
 
-```powershell
-streamlit run dashboard/app.py
+```bash
+# First time only — the dashboard is password-gated:
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+# edit .streamlit/secrets.toml, set a real APP_PASSWORD
+
+make dashboard
 ```
-Opens at `http://localhost:8501`. 4 pages (sidebar nav): Executive
-Overview, Player Analysis, Chemistry Matrix, Final Squad. Sidebar has
+
+Opens at `http://localhost:8501`. **Home + 11 pages** (sidebar nav):
+Player Analysis, Chemistry Matrix, Final Squad, Selection Audit, Fitness &
+Rotation, Tactical Board, Public Sentiment, Competition Context,
+Historical Trend View, Set Piece & Clutch, Squad Builder. Sidebar has
 position filters + player search, shared across pages via
-`st.session_state`.
+`st.session_state`. Every page fails closed with a config error if
+`.streamlit/secrets.toml` is missing or has no `APP_PASSWORD` — that is
+correct behavior, not a bug.
 
 ---
 
-## 7. Known remaining gaps (as of 2026-07-21)
+## 7. Tests
 
-| Gap | Status |
-|---|---|
-| SentimentScore | Not started — needs a full new Twitter/Reddit scraper + NLP pipeline. Explicitly deferred. |
-| ClubElo-based league quality | `ingestion/loaders/clubelo_loader.py` exists fully written but is never called by anything — a more data-driven alternative to the hardcoded league-difficulty table in `league_quality.py`. Candidate for a future session. |
-| `sofascore_parsers_season.py` | (Earlier flagged as orphaned — that was a mistake on my part, corrected: it IS used, via `sofascore_detail_loader.py`. No action needed.) |
-| Full MASTER_SPEC.md rewrite | Only §7/§10 (Gold formula) and the Bronze source inventory have been re-verified this session (see `MASTER_SPEC_ADDENDUM_2026-07-14.md` and `MASTER_SPEC_v2_bronze_and_gold.md`). §6/§9 (Silver contract, detailed column mappings) still reflect the original June 22 spec, unverified. |
-| MentalScore GK homogeneity | Not a bug — data-sparsity artifact (only 1/6 GK candidates has real StatsBomb coverage). Documented in the Addendum §6. Will improve naturally as StatsBomb coverage grows. |
+```bash
+make test   # PYTHONPATH=. pytest tests/ -q — full suite
+```
+
+452 tests collected as of this writing (a handful of files need optional
+extras — `mplsoccer`, `rapidfuzz`, `googleapiclient` — already listed in
+`requirements.txt`; re-run `make install` if collection errors mention
+`ModuleNotFoundError` for any of the three). For the temporal-cutoff
+guarantee specifically:
+
+```bash
+pytest tests/test_temporal_cutoff.py -v
+```
+
+For a full accounting of what currently passes/fails and why, see the
+**Known issues** entries in `CHANGELOG.md` — it is updated per-session and
+is more current than any fixed number quoted here could stay.
 
 ---
 
-*Football Atlas — RUN_INSTRUCTIONS.md · July 21, 2026*
+## 8. MinIO console (optional)
+
+```bash
+make start   # http://localhost:9101 — falls back to MINIO_MOCK=1 if Docker is unavailable
+make stop
+```
+
+---
+
+*Football Atlas — RUN_INSTRUCTIONS.md · synced with README.md and Makefile · August 3, 2026*

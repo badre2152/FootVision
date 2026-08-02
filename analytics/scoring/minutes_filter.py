@@ -76,81 +76,31 @@ def _classify(row: pd.Series) -> str:
 
 def apply_minutes_filter(df: pd.DataFrame) -> pd.DataFrame:
     """
-    يُطبّق penalty على AvailabilityScore بناءً على نشاط موسم 2025/26،
-    ثم يُعيد حساب DSSScore والـ Rank.
+    يُصنّف نشاط كل لاعب (موسم 2025/26) ويُطبّق penalty على AvailabilityScore
+    فقط. لا يحسب DSSScore هنا — شوف apply_dss_gate() أسفله لهاد الخطوة.
 
     يتوقع أعمدة في df:
         - active_2526 (من seed) — إذا لم يوجد يُفترض 'unknown'
         - fm_min, fbref_minutes, csv_min — دقائق موثوقة
-        - AvailabilityScore, PerformanceScore, InternationalScore,
-          FormScore, MentalScore, DSSScore, Rank
+        - AvailabilityScore
+
+    Returns:
+        df مع أعمدة جداد: minutes_flag, AvailabilityScore (مُعدَّل).
+        DSSScore ماشي من مسؤولية هاد الدالة — خاص compute_final_score()
+        يتقرا من بعدها، ومن بعد apply_dss_gate() (شوف BUG-01 أسفله).
     """
-    # BUG FIX: this used to rebuild the composite formula locally with
-    # w.get("performance", 0.35) / w.get("international", 0.25) / etc.
-    # COMPOSITE_WEIGHTS keys are actually "PerformanceScore", "TacticalFitScore"...
-    # — none of those .get() lookups ever matched, so this silently ignored
-    # config.py and always used the hardcoded defaults (harmless only by
-    # coincidence, since the defaults happened to equal the real weights).
-    # It also duplicated the composite math in a second place with different
-    # (broken, non-redistributing) NaN handling than compute_final_score().
-    #
-    # Fix: delegate to the SAME weighted-subscore helper compute_final_score()
-    # uses, with the SAME key mapping, so there is exactly one implementation
-    # of "how DSSScore is computed" in the whole codebase.
-    from config import COMPOSITE_WEIGHTS
-    from analytics.scoring.performance_score import compute_weighted_subscore
-
-    composite_weights = {
-        "PerformanceScore":   COMPOSITE_WEIGHTS["PerformanceScore"],
-        "InternationalScore": COMPOSITE_WEIGHTS["TacticalFitScore"],
-        "FormScore":          COMPOSITE_WEIGHTS["FormScore"],
-        "MentalScore":        COMPOSITE_WEIGHTS["MentalScore"],
-        "AvailabilityScore":  COMPOSITE_WEIGHTS["AvailabilityScore"],
-        "ChemistryScore":     COMPOSITE_WEIGHTS["ChemistryScore"],
-        "PressureIndex":      COMPOSITE_WEIGHTS["PressureIndex"],
-        "FlexibilityScore":   COMPOSITE_WEIGHTS["FlexibilityScore"],
-        "SentimentScore":     COMPOSITE_WEIGHTS["SentimentScore"],
-    }
-
     if "active_2526" not in df.columns:
         df["active_2526"] = "unknown"
         logger.warning("active_2526 column missing — treating all as 'unknown'")
 
-    flags      = df.apply(_classify, axis=1)
+    flags = df.apply(_classify, axis=1)
     df["minutes_flag"] = flags
 
-    # تطبيق الـ penalty
+    # تطبيق الـ penalty على AvailabilityScore فقط (للشفافية الداخلية/التفكيك)
     df["AvailabilityScore"] = df.apply(
         lambda r: round(r["AvailabilityScore"] * PENALTIES[r["minutes_flag"]], 4),
         axis=1,
     )
-
-    # إعادة حساب DSSScore — بنفس الدالة والمفاتيح اللي كيستعملها compute_final_score
-    df["DSSScore_pre_gate"] = df.apply(
-        lambda r: compute_weighted_subscore(r, composite_weights, suffix=""),
-        axis=1,
-    ).round(4)
-
-    # ── FIX (2026-07-29): البوابة الحقيقية على DSSScore، ماشي غير AvailabilityScore ──
-    # المشكلة المكتشفة: العقوبة كانت تُطبَّق فقط على AvailabilityScore (وزنه 7.95%
-    # فقط فـ الصيغة). حتى أقصى عقوبة (SEED_INACTIVE ×0.20) ما تقدر تخفّض DSSScore
-    # بأكثر من ~0.064 نقطة — أقل بكثير من الفارق بين لاعب ممتاز وآخر متوسط فـ باقي
-    # الـ8 مكونات. النتيجة الفعلية المُلاحَظة: Imran Louza (SEED_INACTIVE) تصدّر
-    # الترتيب #1 رغم العلم الصريح بعدم نشاطه — بالضبط السيناريو اللي هذا الملف
-    # بُني أصلاً باش يمنعه (شوف التعليق فـ رأس الملف)، لكن التطبيق الفعلي فشل
-    # يحقق الهدف المكتوب.
-    #
-    # الحل: نطبّق نفس معامل العقوبة (PENALTIES) كمضاعف مباشر على DSSScore الكامل،
-    # فوق تخفيض AvailabilityScore الأصلي (اللي كيبقى للشفافية الداخلية/التفكيك).
-    # هكذا لاعب SEED_INACTIVE ما يقدرش يتصدّر الترتيب إلا لو كان متفوق بشكل
-    # استثنائي جداً فـ كل شيء آخر (سيناريو نادر ويستاهل مراجعة يدوية أصلاً).
-    df["DSSScore"] = df.apply(
-        lambda r: round(r["DSSScore_pre_gate"] * PENALTIES[r["minutes_flag"]], 4),
-        axis=1,
-    )
-
-    # إعادة الترتيب على القيمة المُبوَّبة (الحقيقية)
-    df["Rank"] = df["DSSScore"].rank(ascending=False, method="min").astype(int)
 
     # ── تقارير ──────────────────────────────────────────────────────────
     for flag_name in ("SEED_INACTIVE", "INACTIVE", "LIMITED",
@@ -160,9 +110,74 @@ def apply_minutes_filter(df: pd.DataFrame) -> pd.DataFrame:
             names = ", ".join(affected["player_name"].tolist())
             penalty = PENALTIES[flag_name]
             logger.warning(
-                "minutes_filter [%s] (Avail×%.2f, DSSScore×%.2f): %s",
-                flag_name, penalty, penalty, names,
+                "minutes_filter [%s] (Avail×%.2f): %s",
+                flag_name, penalty, names,
             )
+
+    active_count = (df["minutes_flag"] == "ACTIVE").sum()
+    logger.info(
+        "minutes_filter classification done — ACTIVE:%d | flagged:%d "
+        "(DSSScore gate applied separately by apply_dss_gate(), AFTER "
+        "compute_final_score() — see run_gold.py call order, BUG-01)",
+        active_count, len(df) - active_count,
+    )
+
+    return df
+
+
+def apply_dss_gate(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    يُطبّق penalty مضاعف مباشرة على DSSScore الكامل، فوق تخفيض
+    AvailabilityScore اللي دارتو apply_minutes_filter() أعلاه.
+
+    ── BUG-01 (2026-07-29 / 03_regression_protection.md) ─────────────────
+    المشكلة المكتشفة أصلاً: العقوبة كانت تُطبَّق فقط على AvailabilityScore
+    (وزنه ~7.95% فقط فـ الصيغة). حتى أقصى عقوبة (SEED_INACTIVE ×0.20) ما
+    تقدر تخفّض DSSScore بأكثر من ~0.064 نقطة — أقل بكثير من الفارق بين
+    لاعب ممتاز وآخر متوسط فـ باقي الـ8 مكونات. النتيجة: Imran Louza
+    (SEED_INACTIVE, ACL) تصدّر الترتيب رغم العلم الصريح بعدم نشاطه.
+
+    الحل الأول (فـ نفس اليوم) دمج هاد الحساب داخل apply_minutes_filter()
+    نفسها — لكن هذا خلق BUG-01: run_gold.py كيندا apply_minutes_filter()
+    (لي كانت كتحسب DSSScore مُبوَّب) ومن بعد كيندا compute_final_score()
+    اللي كتعيد حساب DSSScore من الصفر بلا أي بوابة — فكتمحى العقوبة
+    بصمت، بلا أي خطأ. تأكد هذا فعليا فـ gold/players_scored_20260801_*:
+    Imran Louza (SEED_INACTIVE, Avail=0.2) كان لا يزال #15/49، ماشي مُعاقَب
+    بـ ×0.20 على DSSScore الكامل كيما كان المفروض.
+
+    الحل النهائي: فصل الحساب لدالتين — apply_minutes_filter() (تصنيف +
+    عقوبة AvailabilityScore فقط) ثم compute_final_score() (DSSScore خام)
+    ثم هاد apply_dss_gate() (البوابة النهائية على DSSScore الحقيقي). خاص
+    تتنادى بهاد الترتيب بالضبط فـ run_gold.py — أي ترتيب آخر كيرجع لنفس
+    BUG-01 بصمت (بلا exception).
+
+    يتوقع أعمدة في df: DSSScore (من compute_final_score()), minutes_flag
+    (من apply_minutes_filter()).
+
+    Returns:
+        df مع DSSScore_pre_gate (القيمة الخام قبل البوابة، للشفافية) و
+        DSSScore/Rank مُحدَّثين (بعد البوابة).
+    """
+    if "minutes_flag" not in df.columns:
+        raise ValueError(
+            "apply_dss_gate() called without 'minutes_flag' — call "
+            "apply_minutes_filter() first."
+        )
+    if "DSSScore" not in df.columns:
+        raise ValueError(
+            "apply_dss_gate() called without 'DSSScore' — call "
+            "compute_final_score() first (BUG-01: the gate must apply to "
+            "the REAL DSSScore, not a stale/pre-computed one)."
+        )
+
+    df["DSSScore_pre_gate"] = df["DSSScore"]
+    df["DSSScore"] = df.apply(
+        lambda r: round(r["DSSScore_pre_gate"] * PENALTIES[r["minutes_flag"]], 4),
+        axis=1,
+    )
+
+    # إعادة الترتيب على القيمة المُبوَّبة (الحقيقية)
+    df["Rank"] = df["DSSScore"].rank(ascending=False, method="min").astype(int)
 
     # تحذير خاص: أي لاعب SEED_INACTIVE/INACTIVE لازال ضمن أعلى 26 رتبة بعد
     # البوابة — هذا يعني تفوقه فـ باقي المكونات كبير جداً، ويستاهل تحقق يدوي
@@ -179,10 +194,6 @@ def apply_minutes_filter(df: pd.DataFrame) -> pd.DataFrame:
                 r["DSSScore_pre_gate"], r["DSSScore"],
             )
 
-    active_count = (df["minutes_flag"] == "ACTIVE").sum()
-    logger.info(
-        "minutes_filter done — ACTIVE:%d | penalties applied:%d",
-        active_count, len(df) - active_count,
-    )
+    logger.info("apply_dss_gate done — DSSScore gate applied AFTER compute_final_score().")
 
     return df

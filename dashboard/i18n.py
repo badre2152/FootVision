@@ -419,6 +419,66 @@ STRINGS = {
         "ar": "آخر تعديل بواسطة {author} في {time} UTC",
     },
 
+    # #10 — Depth Chart / Replacement Candidates (analytics/depth_chart.py)
+    # Single expander per selected player — houses BOTH the coach note
+    # (#20, above) and the replacement-candidates lookup, rather than two
+    # separate expanders, per tests/test_final_squad_page.py's exact
+    # contract (one "🔄 Replacement options" expander per player).
+    "final_squad.replacement_expander": {
+        "en": "🔄 Replacement options",
+        "fr": "🔄 Options de remplacement",
+        "ar": "🔄 خيارات التعويض",
+    },
+    "final_squad.replacement_header": {
+        "en": "If injured, best replacements from outside the 26:",
+        "fr": "En cas de blessure, meilleurs remplaçants hors des 26 :",
+        "ar": "فحالة الإصابة، أحسن البدلاء من برا لائحة الـ26:",
+    },
+    "final_squad.replacement_candidate_line": {
+        "en": "**{name}** ({position}) — DSSScore {score:.3f} (gap {gap:+.3f}){secondary}{stronger}",
+        "fr": "**{name}** ({position}) — DSSScore {score:.3f} (écart {gap:+.3f}){secondary}{stronger}",
+        "ar": "**{name}** ({position}) — DSSScore {score:.3f} (الفارق {gap:+.3f}){secondary}{stronger}",
+    },
+    "final_squad.replacement_via_secondary_suffix": {
+        "en": " · via secondary position",
+        "fr": " · via poste secondaire",
+        "ar": " · عبر مركز ثانوي",
+    },
+    "final_squad.replacement_stronger_suffix": {
+        "en": " · ⚠️ scores HIGHER than the incumbent",
+        "fr": " · ⚠️ score SUPÉRIEUR au titulaire",
+        "ar": " · ⚠️ نقطة أعلى من صاحب المركز الحالي",
+    },
+    "final_squad.replacement_none": {
+        "en": "No eligible replacement candidates found outside the squad for this position.",
+        "fr": "Aucun candidat de remplacement éligible trouvé hors de l'effectif pour ce poste.",
+        "ar": "ما لقيناش بدلاء مؤهلين برا اللائحة لهاد المركز.",
+    },
+    "final_squad.replacement_thin_depth": {
+        "en": "⚠️ Fewer candidates found than requested — this position's depth is thin.",
+        "fr": "⚠️ Moins de candidats trouvés que demandé — ce poste manque de profondeur.",
+        "ar": "⚠️ عدد البدلاء لي لقينا أقل من المطلوب — هاد المركز فيه نقص فالعمق.",
+    },
+    "final_squad.replacement_no_player_id": {
+        "en": "Replacement lookup unavailable — this player has no player_id in the current export.",
+        "fr": "Recherche de remplaçants indisponible — ce joueur n'a pas de player_id dans l'export actuel.",
+        "ar": "البحث عن بدلاء ماشي متاح — هاد اللاعب ماعندوش player_id فالتصدير الحالي.",
+    },
+    "final_squad.no_player_id_warning": {
+        "en": "This Gold export's top26 file has no `player_id` column (an old, "
+              "not-yet-regenerated export from before the SquadRank/player_id "
+              "export fix) — per-player coach notes and replacement-candidate "
+              "lookups are unavailable until a fresh export is generated.",
+        "fr": "Le fichier top26 de cet export Gold n'a pas de colonne `player_id` "
+              "(un export ancien, pas encore régénéré depuis le correctif "
+              "SquadRank/player_id) — les notes du staff par joueur et la "
+              "recherche de remplaçants sont indisponibles tant qu'un export "
+              "récent n'est pas généré.",
+        "ar": "ملف top26 ديال هاد التصدير ماعندوش عمود `player_id` (تصدير قديم "
+              "مازال ما تجددش من بعد إصلاح SquadRank/player_id) — ملاحظات "
+              "الطاقم الفني والبحث عن البدلاء ماشي متاحين حتى يتجدد التصدير.",
+    },
+
     # #16 — Squad Age/Experience Balance
     "final_squad.age_balance_header": {
         "en": "📈 Age & Experience Balance",

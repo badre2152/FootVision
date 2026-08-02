@@ -116,6 +116,36 @@ class TestCollectPlayerTexts:
 
         assert texts == []
 
+    def test_temporal_cutoff_published_before_defaults_to_decision_date(self):
+        """
+        TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): before this fix, this
+        search had NO date bound at all. Confirms `publishedBefore` is now
+        always sent — the start of the day AFTER config.DECISION_DATE (so
+        content published ON that date is still included).
+        """
+        from config import DECISION_DATE
+
+        mock_yt = MagicMock()
+        mock_yt.search().list().execute.return_value = _make_search_response([])
+
+        _collect_player_texts(mock_yt, HttpError, "Some Player", {})
+
+        call_kwargs = mock_yt.search().list.call_args.kwargs
+        from datetime import timedelta
+        expected_before = (DECISION_DATE + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+        assert call_kwargs["publishedBefore"] == expected_before
+
+    def test_temporal_cutoff_published_before_respects_explicit_as_of(self):
+        from datetime import date
+
+        mock_yt = MagicMock()
+        mock_yt.search().list().execute.return_value = _make_search_response([])
+
+        _collect_player_texts(mock_yt, HttpError, "Some Player", {}, as_of=date(2026, 1, 1))
+
+        call_kwargs = mock_yt.search().list.call_args.kwargs
+        assert call_kwargs["publishedBefore"] == "2026-01-02T00:00:00Z"
+
     def test_video_without_id_is_skipped_for_comments(self):
         """Defensive: a search result missing videoId shouldn't crash comment-fetching."""
         mock_yt = MagicMock()

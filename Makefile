@@ -46,7 +46,7 @@ install:
 
 start:
 	@docker --version > /dev/null 2>&1 && docker-compose up -d \
-		&& echo "✓ MinIO started at http://localhost:9001" \
+		&& echo "✓ MinIO started — console at http://localhost:9101 (S3 API on 9100)" \
 		|| echo "⚠ Docker not available — using MINIO_MOCK=1 (filesystem mock)"
 
 stop:

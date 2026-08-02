@@ -32,6 +32,7 @@ from dashboard.sidebar import render_sidebar
 from dashboard.auth import require_auth
 from dashboard.i18n import t
 from dashboard.report_utils import csv_download_button
+from dashboard.components import post_hoc_banner
 
 st.set_page_config(page_title="Football Atlas — Selection Audit", page_icon="🔍", layout="wide")
 require_auth()  # spec #6 — must run before render_sidebar()/any data load below
@@ -42,6 +43,13 @@ audit_data = load_latest_selection_audit()
 if audit_data is None:
     st.warning(t("audit.no_data_warning"))
     st.stop()
+
+# This page audits DSSScore's top-26 against the REAL announced World Cup
+# squad (2026-05-26) — information that was not knowable as of
+# config.DECISION_DATE. Same treatment as the real-opponent-result section
+# of dashboard/pages/8_competition.py (post_hoc_banner() itself,
+# spec "05_dashboard_decision_vs_audit_labeling.md").
+post_hoc_banner()
 
 st.caption(t(
     "audit.source_caption",

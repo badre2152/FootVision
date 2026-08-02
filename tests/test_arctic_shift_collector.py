@@ -94,6 +94,63 @@ class TestSearchPosts:
         assert "apiKey" not in call_kwargs.get("params", {})
         assert "client_id" not in call_kwargs.get("params", {})
 
+    def test_before_param_passed_through_when_given(self):
+        """
+        TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): before this fix,
+        _search_posts() had NO date bound param at all.
+        """
+        with patch("ingestion.loaders.arctic_shift_collector.requests.get",
+                   return_value=_make_response({"data": []})) as mock_get:
+            _search_posts("soccer", "Player", before_ts=1780000000)
+
+        assert mock_get.call_args.kwargs["params"]["before"] == 1780000000
+
+    def test_no_before_param_when_not_given(self):
+        """Backward-compatible default: no before_ts → no `before` param sent."""
+        with patch("ingestion.loaders.arctic_shift_collector.requests.get",
+                   return_value=_make_response({"data": []})) as mock_get:
+            _search_posts("soccer", "Player")
+
+        assert "before" not in mock_get.call_args.kwargs["params"]
+
+
+class TestCollectPlayerTextsTemporalCutoff:
+    """
+    TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): _collect_player_texts()
+    must convert as_of into a Unix `before` timestamp and pass it to BOTH
+    _search_posts() and _search_comments() — a post from before the
+    cutoff can still pick up new comments after it, so the comment fetch
+    needs its own bound too, not just the post fetch.
+    """
+
+    def test_before_ts_reaches_search_posts_and_defaults_to_decision_date(self):
+        from config import DECISION_DATE
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+        expected_before_ts = int(
+            (_dt.combine(DECISION_DATE, _dt.min.time(), tzinfo=_tz.utc) + _td(days=1)).timestamp()
+        )
+
+        with patch("ingestion.loaders.arctic_shift_collector._search_posts", return_value=[]) as mock_posts:
+            _collect_player_texts("Some Player")
+
+        for call in mock_posts.call_args_list:
+            assert call.kwargs.get("before_ts") == expected_before_ts
+
+    def test_before_ts_respects_explicit_as_of(self):
+        from datetime import date, datetime as _dt, timezone as _tz, timedelta as _td
+
+        as_of = date(2026, 1, 1)
+        expected_before_ts = int(
+            (_dt.combine(as_of, _dt.min.time(), tzinfo=_tz.utc) + _td(days=1)).timestamp()
+        )
+
+        with patch("ingestion.loaders.arctic_shift_collector._search_posts", return_value=[]) as mock_posts:
+            _collect_player_texts("Some Player", as_of=as_of)
+
+        for call in mock_posts.call_args_list:
+            assert call.kwargs.get("before_ts") == expected_before_ts
+
 
 class TestIsBotOrRemoved:
     """
@@ -315,7 +372,7 @@ class TestLoadArcticShiftBronze:
             "player_name": ["Popular Player", "Obscure Player"],
         })
 
-        def fake_collect(player_name):
+        def fake_collect(player_name, as_of=None):
             return ["some discussion"] if player_name == "Popular Player" else []
 
         with patch("ingestion.loaders.arctic_shift_collector.upload_json", return_value=True), \

@@ -244,3 +244,188 @@ class TestAvailableComponentColumns:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# load_all_players_scored_history / compute_biggest_movers — spec #18
+# ─────────────────────────────────────────────────────────────────────────────
+# Re-added 2026-08-02: this coverage existed in an earlier session but was
+# lost somewhere in a later rewrite of this file (only the function's
+# @st.cache_data .clear() registration in _CACHED_LOADERS survived). Also
+# updated for spec #1 now being genuinely implemented: is_pre_cutoff_fix is
+# a REAL per-run flag read from squad_summary_<timestamp>.json's
+# decision_date_enforced field (see data_loader.py's
+# _is_run_cutoff_enforced()) — no longer a hardcoded True for everything.
+
+def _write_players_scored(gold_dir, run_date_str, rows):
+    """Helper: writes a minimal players_scored_<run_date_str>.csv fixture."""
+    path = gold_dir / f"players_scored_{run_date_str}.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def _write_squad_summary(gold_dir, run_date_str, decision_date_enforced):
+    """Helper: writes a minimal squad_summary_<run_date_str>.json fixture."""
+    path = gold_dir / f"squad_summary_{run_date_str}.json"
+    path.write_text(json.dumps({"decision_date_enforced": decision_date_enforced}))
+    return path
+
+
+class TestIsRunCutoffEnforced:
+
+    def test_missing_squad_summary_fails_closed_to_false(self, fake_dirs):
+        assert dl._is_run_cutoff_enforced("20260701_090000") is False
+
+    def test_true_when_squad_summary_says_enforced(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        _write_squad_summary(gold_dir, "20260801_090000", decision_date_enforced=True)
+        assert dl._is_run_cutoff_enforced("20260801_090000") is True
+
+    def test_false_when_squad_summary_says_not_enforced(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        _write_squad_summary(gold_dir, "20260701_090000", decision_date_enforced=False)
+        assert dl._is_run_cutoff_enforced("20260701_090000") is False
+
+    def test_false_when_field_missing_from_summary(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        (gold_dir / "squad_summary_20260701_090000.json").write_text(json.dumps({"generated_at": "x"}))
+        assert dl._is_run_cutoff_enforced("20260701_090000") is False
+
+    def test_false_on_corrupt_json(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        (gold_dir / "squad_summary_20260701_090000.json").write_text("{not valid json")
+        assert dl._is_run_cutoff_enforced("20260701_090000") is False
+
+
+class TestLoadAllPlayersScoredHistory:
+
+    def test_returns_empty_dataframe_when_no_snapshots(self, fake_dirs):
+        history = dl.load_all_players_scored_history()
+        assert isinstance(history, pd.DataFrame)
+        assert history.empty
+
+    def test_concatenates_every_snapshot_long_format(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.5, "Rank": 1},
+            {"player_id": "P2", "player_name": "B", "position": "DEF", "DSSScore": 0.4, "Rank": 2},
+        ])
+        _write_players_scored(gold_dir, "20260708_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.55, "Rank": 1},
+            {"player_id": "P2", "player_name": "B", "position": "DEF", "DSSScore": 0.42, "Rank": 2},
+        ])
+
+        history = dl.load_all_players_scored_history()
+        assert len(history) == 4
+        assert history["run_date"].nunique() == 2
+        assert list(history.columns[:3]) == ["run_date", "source_file", "is_pre_cutoff_fix"]
+        assert history["run_date"].is_monotonic_increasing
+
+    def test_is_pre_cutoff_fix_reads_real_flag_from_squad_summary(self, fake_dirs):
+        """
+        Core spec #1-integration behavior: a run whose squad_summary_*.json
+        says decision_date_enforced=True must show is_pre_cutoff_fix=False,
+        and vice versa — no more blanket "always pre-fix" assumption now
+        that the code genuinely stamps this per run.
+        """
+        gold_dir, _ = fake_dirs
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.5, "Rank": 1},
+        ])
+        _write_squad_summary(gold_dir, "20260701_090000", decision_date_enforced=False)
+
+        _write_players_scored(gold_dir, "20260801_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.6, "Rank": 1},
+        ])
+        _write_squad_summary(gold_dir, "20260801_090000", decision_date_enforced=True)
+
+        history = dl.load_all_players_scored_history()
+        by_file = history.set_index("source_file")["is_pre_cutoff_fix"]
+        assert bool(by_file["players_scored_20260701_090000.csv"]) is True
+        assert bool(by_file["players_scored_20260801_090000.csv"]) is False
+
+    def test_missing_squad_summary_defaults_to_pre_cutoff_fix_true(self, fake_dirs):
+        """No squad_summary_*.json at all for a snapshot → fail closed (pre-fix)."""
+        gold_dir, _ = fake_dirs
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.5, "Rank": 1},
+        ])
+        history = dl.load_all_players_scored_history()
+        assert history["is_pre_cutoff_fix"].all()
+
+    def test_include_pre_cutoff_fix_false_excludes_only_pre_fix_runs(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.5, "Rank": 1},
+        ])
+        _write_squad_summary(gold_dir, "20260701_090000", decision_date_enforced=False)
+
+        _write_players_scored(gold_dir, "20260801_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.6, "Rank": 1},
+        ])
+        _write_squad_summary(gold_dir, "20260801_090000", decision_date_enforced=True)
+
+        history = dl.load_all_players_scored_history(include_pre_cutoff_fix=False)
+        assert history["source_file"].unique().tolist() == ["players_scored_20260801_090000.csv"]
+
+    def test_skips_unparseable_filenames(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        (gold_dir / "players_scored_latest.csv").write_text("player_id,player_name\nP1,A\n")
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.5, "Rank": 1},
+        ])
+        history = dl.load_all_players_scored_history()
+        assert len(history) == 1
+
+
+class TestComputeBiggestMovers:
+
+    def test_empty_history_returns_empty(self):
+        assert dl.compute_biggest_movers(pd.DataFrame()).empty
+        assert dl.compute_biggest_movers(None).empty
+
+    def test_single_snapshot_returns_empty(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.5, "Rank": 1},
+        ])
+        history = dl.load_all_players_scored_history()
+        assert dl.compute_biggest_movers(history).empty
+
+    def test_computes_rank_change_between_last_two_snapshots(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.9, "Rank": 1},
+            {"player_id": "P2", "player_name": "B", "position": "DEF", "DSSScore": 0.1, "Rank": 2},
+        ])
+        _write_players_scored(gold_dir, "20260708_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.6, "Rank": 2},
+            {"player_id": "P2", "player_name": "B", "position": "DEF", "DSSScore": 0.7, "Rank": 1},
+        ])
+        _write_players_scored(gold_dir, "20260715_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.8, "Rank": 1},
+            {"player_id": "P2", "player_name": "B", "position": "DEF", "DSSScore": 0.5, "Rank": 2},
+        ])
+
+        history = dl.load_all_players_scored_history()
+        movers = dl.compute_biggest_movers(history)
+
+        assert len(movers) == 2
+        p1 = movers[movers["player_id"] == "P1"].iloc[0]
+        p2 = movers[movers["player_id"] == "P2"].iloc[0]
+        assert p1["previous_rank"] == 2 and p1["current_rank"] == 1 and p1["rank_change"] == 1
+        assert p2["previous_rank"] == 1 and p2["current_rank"] == 2 and p2["rank_change"] == -1
+        assert {"previous_run_date", "current_run_date"}.issubset(movers.columns)
+
+    def test_only_common_players_across_both_snapshots_are_compared(self, fake_dirs):
+        gold_dir, _ = fake_dirs
+        _write_players_scored(gold_dir, "20260701_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.9, "Rank": 1},
+        ])
+        _write_players_scored(gold_dir, "20260708_090000", [
+            {"player_id": "P1", "player_name": "A", "position": "MID", "DSSScore": 0.9, "Rank": 1},
+            {"player_id": "P2", "player_name": "B", "position": "DEF", "DSSScore": 0.5, "Rank": 2},
+        ])
+        history = dl.load_all_players_scored_history()
+        movers = dl.compute_biggest_movers(history)
+        assert list(movers["player_id"]) == ["P1"]

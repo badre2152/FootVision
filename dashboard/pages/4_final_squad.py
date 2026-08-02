@@ -28,6 +28,7 @@ from dashboard.notes_store import get_all_notes
 from dashboard.report_utils import csv_download_button, build_final_squad_pdf
 from analytics.ml.player_clustering import ARCHETYPE_EMOJI  # NEW 2026-07-29
 from analytics.squad_balance import compute_age_distribution, TIER_ORDER, UNKNOWN_TIER  # #16
+from analytics.depth_chart import get_replacement_candidates  # #10
 
 st.set_page_config(page_title="Football Atlas — Final Squad", page_icon="🏆", layout="wide")
 require_auth()  # spec #6 — must run before render_sidebar()/any data load below
@@ -74,6 +75,17 @@ if filters_applied:
 # from the Bronze/Silver/Gold pipeline entirely (top26/players_scored
 # have nothing to do with where notes live).
 all_notes = get_all_notes()
+
+# #10 — Depth Chart / Replacement Candidates. Needs the FULL scored pool
+# (all 49, not just the selected 26) to look outside the squad, and the
+# selected_ids must come from top26_full["player_id"] (the actual
+# position-capped squad) — never a raw Rank<=26 shortcut, see
+# analytics/depth_chart.py::get_replacement_candidates()'s docstring.
+players_full = load_latest_players_scored()
+has_player_id = "player_id" in top26_full.columns
+if not has_player_id:
+    st.info(t("final_squad.no_player_id_warning"))
+selected_ids = set(top26_full["player_id"]) if has_player_id else set()
 
 if "PlayerDNA" in top26.columns and (top26["PlayerDNA"] != "N/A").any():
     st.caption(t("final_squad.dna_caption"))
@@ -122,13 +134,43 @@ for pos in POSITION_ORDER:
             st.progress(min(max(row["DSSScore"], 0.0), 1.0), text=t("final_squad.dss_progress", score=f"{row['DSSScore']:.3f}"))
             st.caption(_justification(row))
 
-            note = all_notes.get(str(row.get("player_id", "")))
-            with st.expander(t("final_squad.note_expander")):
-                if note and note.get("text"):
-                    st.write(note["text"])
-                    st.caption(t("final_squad.note_last_edited", author=note["author"], time=note["updated_at"]))
-                else:
-                    st.caption(t("final_squad.note_empty"))
+            if has_player_id:
+                player_id = row.get("player_id")
+                note = all_notes.get(str(player_id))
+                with st.expander(t("final_squad.replacement_expander")):
+                    # ── Coach note sub-section (#20) ────────────────────
+                    st.markdown(f"**{t('final_squad.note_expander')}**")
+                    if note and note.get("text"):
+                        st.write(note["text"])
+                        st.caption(t("final_squad.note_last_edited", author=note["author"], time=note["updated_at"]))
+                    else:
+                        st.caption(t("final_squad.note_empty"))
+
+                    st.divider()
+
+                    # ── Replacement candidates sub-section (#10) ────────
+                    st.markdown(f"**{t('final_squad.replacement_header')}**")
+                    if players_full is None or "player_id" not in players_full.columns:
+                        st.caption(t("final_squad.replacement_no_player_id"))
+                    else:
+                        depth = get_replacement_candidates(
+                            players_full, selected_ids=selected_ids,
+                            player_id=player_id, top_n=3,
+                        )
+                        if not depth.candidates:
+                            st.caption(depth.message or t("final_squad.replacement_none"))
+                        else:
+                            for cand in depth.candidates:
+                                secondary = t("final_squad.replacement_via_secondary_suffix") if cand.via_secondary_position else ""
+                                stronger = t("final_squad.replacement_stronger_suffix") if cand.stronger_than_incumbent else ""
+                                st.markdown(t(
+                                    "final_squad.replacement_candidate_line",
+                                    name=cand.player_name, position=cand.position,
+                                    score=cand.DSSScore, gap=cand.gap_to_incumbent,
+                                    secondary=secondary, stronger=stronger,
+                                ))
+                            if not depth.has_full_depth:
+                                st.caption(t("final_squad.replacement_thin_depth"))
     st.divider()
 
 expected_caps = {"GK": 3, "DEF": 9, "MID": 9, "FWD": 5}
@@ -155,7 +197,6 @@ st.divider()
 st.subheader(t("final_squad.age_balance_header"))
 st.caption(t("final_squad.age_balance_caption", as_of=config.DECISION_DATE.isoformat()))
 
-players_full = load_latest_players_scored()
 if players_full is None or "wiki_dob" not in players_full.columns:
     st.caption(t("final_squad.age_balance_no_source"))
 else:

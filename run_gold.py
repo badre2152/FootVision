@@ -49,6 +49,50 @@ from analytics.scoring.sentiment_score import compute_sentiment_score      # NEW
 from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary  # WIRED IN 2026-07-14 (was orphaned)
 from analytics.ml.player_clustering import cluster_players  # NEW 2026-07-29 — ML layer, see module docstring
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# TOP_EXPORT_COLS / build_top_cols() — regression fix (03_regression_protection.md)
+# ══════════════════════════════════════════════════════════════════════════
+# HISTORY: this used to be a local `top_cols = [...]` list inline in main(),
+# built without "SquadRank". That was fixed once (SquadRank added), then the
+# fix was silently lost again in a later delivered archive because nothing
+# asserted on the column list's actual contents — see
+# tests/test_regression_protection.py::TestTopColsIncludesSquadRank, which
+# now pins this exact behavior so it can't regress again unnoticed.
+#
+# Pulled out to a module-level constant + a testable function (rather than
+# an inline list inside main()) specifically so a test can import run_gold
+# and call build_top_cols() directly, without running the full pipeline.
+TOP_EXPORT_COLS = [
+    "SquadRank", "Rank", "player_id", "player_name", "position", "club", "league",
+    "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
+    "MentalScore", "AvailabilityScore", "InternationalScore",
+    "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
+    "PlayerDNA", "selection_reason",  # NEW 2026-08-01 (spec #13)
+]
+
+
+def build_top_cols(available_columns) -> list[str]:
+    """
+    Returns TOP_EXPORT_COLS filtered down to whichever of those columns are
+    actually present in `available_columns` (preserving TOP_EXPORT_COLS's
+    order). Columns not present are silently dropped — this is a
+    defensive/optional-column filter, not a validation step, so a squad_df
+    missing e.g. "selection_reason" (or, in principle, "SquadRank") must not
+    raise here.
+
+    Args:
+        available_columns: any iterable of column names — typically
+            `squad_df.columns`, but plain lists work too (see
+            tests/test_regression_protection.py).
+
+    Returns:
+        The subset of TOP_EXPORT_COLS present in available_columns, in
+        TOP_EXPORT_COLS's canonical order.
+    """
+    available = set(available_columns)
+    return [c for c in TOP_EXPORT_COLS if c in available]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -359,6 +403,8 @@ def build_squad_summary(squad_df: pd.DataFrame, all_df: pd.DataFrame, top_n: int
     `all_df` (the full 49-candidate table) is only used for total_candidates
     and the global score_range — never for position_breakdown.
     """
+    from config import DECISION_DATE
+
     # Position breakdown — from the CAPPED squad, not raw Rank
     position_counts = squad_df.groupby("position")["player_name"].apply(list).to_dict()
     position_size = {pos: len(names) for pos, names in position_counts.items()}
@@ -396,6 +442,17 @@ def build_squad_summary(squad_df: pd.DataFrame, all_df: pd.DataFrame, top_n: int
 
     return {
         "generated_at":       datetime.now().isoformat(),
+        # #24 / #18 forward-compat stamp (01_temporal_cutoff.md is now
+        # implemented — see config.py § 0). Lets dashboard/data_loader.py's
+        # load_all_players_scored_history() (spec #18) tell a genuinely
+        # cutoff-enforced run apart from an old pre-fix one, instead of
+        # conservatively treating every snapshot as pre-fix forever.
+        # `decision_date_enforced` is a claim about THIS CODE VERSION, not a
+        # per-record guarantee — see config.py's own caveats about live
+        # sources (e.g. NewsAPI's free-tier ~30-day window) that can't
+        # always honor an arbitrary as_of even when the code asks them to.
+        "decision_date_enforced": True,
+        "decision_date":       DECISION_DATE.isoformat(),
         "total_candidates":   len(all_df),
         "squad_size":         len(squad_df),          # actual selected count, not just target
         "squad_size_target":  top_n,
@@ -516,15 +573,28 @@ def main() -> None:
     logger.info("Step 3.5/5 — Applying minutes filter (current season activity)...")
     from analytics.scoring.minutes_filter import apply_minutes_filter as _mf
     df = _mf(df)
-    inactive = df[df.get("minutes_flag", pd.Series("active", index=df.index)) == "inactive"]
+    inactive = df[df.get("minutes_flag", pd.Series("ACTIVE", index=df.index)).isin(["INACTIVE", "SEED_INACTIVE"])]
     if not inactive.empty:
         logger.warning(
-            "INACTIVE players (penalised -65%% AvailabilityScore): %s",
+            "INACTIVE/SEED_INACTIVE players (AvailabilityScore penalised, DSSScore gate applied after scoring): %s",
             ", ".join(inactive["player_name"].tolist())
         )
 
     logger.info("Step 4/5 — Computing final DSSScore and ranking...")
     df = compute_final_score(df)
+
+    # BUG-01 FIX (03_regression_protection.md / analytics/scoring/minutes_filter.py):
+    # this MUST run AFTER compute_final_score(), never before. apply_minutes_filter()
+    # above only classifies activity + penalizes AvailabilityScore; the actual
+    # DSSScore-level gate (the one that stops an injured/inactive player like
+    # Imran Louza topping the ranking on the strength of historical stats alone)
+    # is applied HERE, to the real freshly-computed DSSScore. Reordering these two
+    # calls silently reintroduces BUG-01 — no exception is raised, the gate's
+    # effect just vanishes, so tests/test_gold2_components.py's
+    # TestMinutesFilterWeightBinding class asserts on the actual numeric effect,
+    # not just that the functions were called.
+    from analytics.scoring.minutes_filter import apply_dss_gate
+    df = apply_dss_gate(df)
 
     # WIRED IN 2026-07-14: was a fully-built, never-called module
     # (analytics/scoring/percentile_score.py — confirmed zero call sites
@@ -600,14 +670,7 @@ def main() -> None:
         depth_chart_surplus_threshold=args.depth_chart_surplus_threshold,
     )
     top_df   = squad_df
-    top_cols = [
-        "Rank", "player_id", "player_name", "position", "club", "league",
-        "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
-        "MentalScore", "AvailabilityScore", "InternationalScore",
-        "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
-        "PlayerDNA", "selection_reason",  # NEW 2026-08-01 (spec #13)
-    ]
-    top_cols = [c for c in top_cols if c in top_df.columns]
+    top_cols = build_top_cols(top_df.columns)
     top_path = output_dir / f"top{args.top_n}_{run_date}.csv"
     top_df[top_cols].to_csv(top_path, index=False)
     logger.info("Top-%d recommendation: %s", args.top_n, top_path)

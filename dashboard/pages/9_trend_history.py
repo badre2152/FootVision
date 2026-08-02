@@ -12,13 +12,13 @@
 # across the prep window is visible, plus a squad-level "biggest movers"
 # table between the two most recent runs.
 #
-# DECISION_DATE / spec #1 caveat: see the long comment above
-# load_all_players_scored_history() in dashboard/data_loader.py — spec #1
-# (the temporal-cutoff enforcement this page is supposed to respect) has
-# not been implemented anywhere in this codebase yet, so every snapshot
-# currently on disk is treated as pre-cutoff-fix and flagged with
-# pre_cutoff_fix_banner() below rather than silently excluded (excluding
-# everything would leave this page permanently empty).
+# DECISION_DATE / spec #1: 01_temporal_cutoff.md IS now implemented (see
+# config.py § 0 and dashboard/data_loader.py's _is_run_cutoff_enforced()).
+# Snapshots generated before that fix landed are still flagged via
+# is_pre_cutoff_fix (read from each run's squad_summary_*.json —
+# decision_date_enforced), and pre_cutoff_fix_banner() below only renders
+# when at least one currently-selected snapshot is actually flagged that
+# way — not unconditionally.
 
 import sys
 from pathlib import Path
@@ -47,12 +47,17 @@ st.caption(
     "not just the latest run."
 )
 
-pre_cutoff_fix_banner()
-
 history = load_all_players_scored_history()
 if history.empty:
     st.error("No `gold/players_scored_*.csv` snapshots found. Run `run_gold.py` at least once.")
     st.stop()
+
+if history["is_pre_cutoff_fix"].any():
+    n_pre_fix = history.loc[history["is_pre_cutoff_fix"], "source_file"].nunique()
+    n_total = history["source_file"].nunique()
+    pre_cutoff_fix_banner(
+        extra=f"{n_pre_fix} of {n_total} snapshot(s) shown below predate the temporal-cutoff fix."
+    )
 
 n_snapshots = history["run_date"].nunique()
 if n_snapshots < 2:

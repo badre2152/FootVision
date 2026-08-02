@@ -46,11 +46,7 @@ DECISION_SUPPORT_PAGE = "dashboard/app.py"
 
 def _run(app_relpath: str):
     at = AppTest.from_file(str(PROJECT_ROOT / app_relpath))
-    # Spec #6 (06_authentication.md) added a require_auth() login gate at
-    # the top of every page — bypass it here the same way a real logged-in
-    # session would, since this test is checking real page CONTENT, not
-    # the auth gate itself (that's tests/test_auth.py's job).
-    at.session_state["_auth_ok"] = True
+    at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
     at.run(timeout=60)
     assert not at.exception, f"{app_relpath} raised: {at.exception}"
     return at

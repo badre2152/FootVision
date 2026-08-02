@@ -95,7 +95,7 @@ def _try_build_youtube_client():
     return client, HttpError
 
 
-def _collect_player_texts(youtube, HttpError, player_name: str, quota_tracker: dict) -> list[str]:
+def _collect_player_texts(youtube, HttpError, player_name: str, quota_tracker: dict, as_of: "date | None" = None) -> list[str]:
     """
     Searches YouTube for `player_name` + context, then pulls top comments
     from the top MAX_VIDEOS_PER_PLAYER results.
@@ -104,10 +104,24 @@ def _collect_player_texts(youtube, HttpError, player_name: str, quota_tracker: d
         quota_tracker: a shared dict with key "units_used", mutated in
             place so the caller can log a running total across all 49
             players (see the quota-budget warning in the module docstring).
+        as_of: TEMPORAL CUTOFF FIX (01_temporal_cutoff.md). Upper-bound
+            date passed as YouTube's `publishedBefore` param — defaults to
+            config.DECISION_DATE. Without this, this collector had ZERO
+            date bound at all, so a live run could pull in videos/comments
+            from any time, including well after the actual decision date,
+            straight into SentimentScore. Set to the START of the day
+            AFTER `as_of` (RFC 3339, UTC) so content published ON as_of's
+            date is still included — only strictly-after content is cut.
 
     Returns:
         Flat list of strings (video titles + comment text).
     """
+    if as_of is None:
+        from config import DECISION_DATE
+        as_of = DECISION_DATE
+    from datetime import timedelta
+    published_before = (as_of + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+
     texts: list[str] = []
 
     try:
@@ -117,6 +131,7 @@ def _collect_player_texts(youtube, HttpError, player_name: str, quota_tracker: d
             type="video",
             maxResults=MAX_VIDEOS_PER_PLAYER,
             order="relevance",
+            publishedBefore=published_before,  # TEMPORAL CUTOFF FIX
         ).execute()
         quota_tracker["units_used"] = quota_tracker.get("units_used", 0) + SEARCH_QUOTA_COST
     except HttpError as e:
@@ -164,7 +179,7 @@ def _collect_player_texts(youtube, HttpError, player_name: str, quota_tracker: d
     return texts
 
 
-def load_youtube_bronze(seed_df: pd.DataFrame, run_date: str = "") -> str:
+def load_youtube_bronze(seed_df: pd.DataFrame, run_date: str = "", as_of: "date | None" = None) -> str:
     """
     Collects raw text (video titles + comments) mentioning each of the 49
     candidates from YouTube, for downstream sentiment scoring.
@@ -172,12 +187,19 @@ def load_youtube_bronze(seed_df: pd.DataFrame, run_date: str = "") -> str:
     Args:
         seed_df:  Must contain columns: player_id, player_name
         run_date: Timestamp string; auto-generated if empty
+        as_of: TEMPORAL CUTOFF FIX (01_temporal_cutoff.md) — decision-date
+            cutoff passed through to _collect_player_texts(). Defaults to
+            config.DECISION_DATE.
 
     Returns:
         Status string, e.g. "OK (18/49 players with data, ~5200/10000 quota units used)"
     """
     if not run_date:
         run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if as_of is None:
+        from config import DECISION_DATE
+        as_of = DECISION_DATE
 
     validate_seed_columns(seed_df, ["player_id", "player_name"], source="youtube")
 
@@ -203,7 +225,7 @@ def load_youtube_bronze(seed_df: pd.DataFrame, run_date: str = "") -> str:
             records.append({"player_id": row["player_id"]})
             continue
 
-        texts = _collect_player_texts(youtube, HttpError, row["player_name"], quota_tracker)
+        texts = _collect_player_texts(youtube, HttpError, row["player_name"], quota_tracker, as_of=as_of)
         record = {"player_id": row["player_id"]}
         if texts:
             record["youtube_texts"] = texts

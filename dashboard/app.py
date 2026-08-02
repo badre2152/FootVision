@@ -25,17 +25,17 @@ from dashboard.data_loader import (
     load_latest_squad_summary,
 )
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
+from dashboard.auth import require_auth
 from dashboard.i18n import t
 from dashboard.report_utils import csv_download_button
-from dashboard.auth import require_auth
 
 st.set_page_config(
     page_title="Football Atlas — Executive Dashboard",
     page_icon="⚽",
     layout="wide",
 )
-
 require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+
 render_sidebar()
 
 st.title(t("nav.app_title"))

@@ -278,6 +278,33 @@ def _parse_run_date(path: Path):
         return None
 
 
+def _is_run_cutoff_enforced(run_timestamp: str) -> bool:
+    """
+    Looks up gold/squad_summary_<run_timestamp>.json's decision_date_enforced
+    field (stamped by run_gold.py's build_squad_summary(), now that spec #1 is
+    implemented — see config.py § 0). Fails CLOSED (returns False, i.e.
+    "treat as pre-cutoff-fix") if the file is missing, unreadable, or the
+    field itself is absent — matching this module's "never silently assume
+    a snapshot is safe" posture from the big comment above
+    load_all_players_scored_history().
+
+    Deliberately NOT @st.cache_data-wrapped: it's a small per-call helper
+    invoked once per snapshot INSIDE load_all_players_scored_history(),
+    which is itself the cached entry point (see the decorator below) —
+    caching both would just add cache-key bookkeeping for a function that
+    already never runs outside its cached caller.
+    """
+    summary_path = GOLD_DIR / f"squad_summary_{run_timestamp}.json"
+    if not summary_path.exists():
+        return False
+    try:
+        with open(summary_path, "r", encoding="utf-8") as f:
+            summary = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+    return bool(summary.get("decision_date_enforced", False))
+
+
 @st.cache_data(ttl=300)  # 5 min — see module docstring; extends spec #22's pattern beyond
                           # the literal load_latest_* naming since this reads EVERY
                           # players_scored_*.csv snapshot on every call (heavier than any
@@ -290,15 +317,17 @@ def load_all_players_scored_history(include_pre_cutoff_fix: bool = True) -> pd.D
 
     Args:
         include_pre_cutoff_fix: whether to include snapshots that predate
-            spec #1's DECISION_DATE-cutoff enforcement (see the module-level
-            note above `_SNAPSHOT_FILENAME_RE` for why this currently means
-            "every snapshot that exists today"). Defaults to True so the
-            page has data to show; set False once spec #1 lands and you
-            want to see only cutoff-enforced runs.
+            spec #1's DECISION_DATE-cutoff enforcement (see
+            _is_run_cutoff_enforced() above — this now reads a REAL
+            per-run flag stamped by run_gold.py, rather than assuming
+            every snapshot is pre-fix). Defaults to True so the page has
+            data to show even when every existing snapshot predates the
+            fix; set False to see only genuinely cutoff-enforced runs.
 
     Returns:
         A DataFrame with columns `run_date` (datetime), `source_file`,
-        `is_pre_cutoff_fix` (bool), plus every column from the underlying
+        `is_pre_cutoff_fix` (bool, now a REAL per-run flag — see
+        _is_run_cutoff_enforced()), plus every column from the underlying
         players_scored_*.csv files (player_id, player_name, DSSScore,
         Rank, position, and whichever sub-score columns that particular
         run produced — see NEW_COMPONENT_COLUMNS above; older runs won't
@@ -321,10 +350,8 @@ def load_all_players_scored_history(include_pre_cutoff_fix: bool = True) -> pd.D
             logger.warning("Skipping %s — could not parse a run_date from its filename.", path.name)
             continue
 
-        # See the big caveat above `_SNAPSHOT_FILENAME_RE`: there is currently
-        # no per-run signal for whether DECISION_DATE was actually enforced,
-        # so every existing snapshot is conservatively treated as pre-fix.
-        is_pre_cutoff_fix = True
+        run_timestamp = _SNAPSHOT_FILENAME_RE.search(path.name).group(1)
+        is_pre_cutoff_fix = not _is_run_cutoff_enforced(run_timestamp)
         if not include_pre_cutoff_fix and is_pre_cutoff_fix:
             continue
 

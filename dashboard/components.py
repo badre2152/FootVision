@@ -101,11 +101,13 @@ def pre_cutoff_fix_banner(extra: str | None = None) -> None:
             wording.
     """
     text = (
-        f"{PRE_CUTOFF_FIX_BANNER_TITLE} — spec #1 (the Bronze/Silver "
-        "temporal-cutoff fix for `--as-of` runs) has not been implemented "
-        "yet, so every snapshot shown here predates cutoff enforcement and "
-        "may contain temporally-leaked data. Treat trends as directional, "
-        "not as a validated decision-support signal."
+        f"{PRE_CUTOFF_FIX_BANNER_TITLE} — this snapshot was generated before "
+        "spec #1's DECISION_DATE-cutoff enforcement existed in the code (see "
+        "config.py § 0), so it may contain temporally-leaked data (e.g. "
+        "injury/form data from after the actual decision date). Treat it as "
+        "directional only, not as a validated decision-support signal. "
+        "Re-run the pipeline (`run_bronze.py --as-of ... → run_silver.py → "
+        "run_gold.py`) to produce a genuinely cutoff-enforced snapshot."
     )
     if extra:
         text += f"\n\n{extra}"

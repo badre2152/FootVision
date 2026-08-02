@@ -1,9 +1,9 @@
 # Football Atlas — Morocco WC26 Squad Selection Decision Support System
 
 A medallion-architecture (Bronze → Silver → Gold) data pipeline, plus four
-decision-support modules and an 11-page Streamlit dashboard, built to help
-reason about Morocco's 26-man squad selection for the 2026 World Cup from a
-pool of 49 candidate players.
+decision-support modules and a password-gated, 12-page Streamlit dashboard
+(Home + 11 pages), built to help reason about Morocco's 26-man squad
+selection for the 2026 World Cup from a pool of 49 candidate players.
 
 Pipeline end-to-end لاختيار 26 لاعباً للمنتخب المغربي من قائمة 49 مرشحاً.
 
@@ -20,29 +20,43 @@ the decision would have been made* — not data scraped afterwards, with the
 benefit of hindsight. Morocco's real 26-man 2026 World Cup squad was
 announced **2026-05-26** by head coach Mohamed Ouahbi. For this project's
 Selection Audit module to mean anything as a genuine "would our scoring have
-picked the same squad" test, the Bronze data feeding it should, in principle,
-be frozen as of a single, explicit **decision date** — ideally at or before
-2026-05-26.
+picked the same squad" test, the Bronze data feeding it must be frozen as of
+a single, explicit **decision date**, at or before 2026-05-26.
 
-**Current state of the implementation — please read carefully:**
-- There is **no single, enforced `DECISION_DATE` variable** wired through
-  Bronze → Silver → Gold today. This is a known gap, not a hidden feature.
-- The one real "as-of" hook that exists is `run_injury_predictor.py`'s
-  `--reference-date` flag (used to compute player age as-of a given date;
-  defaults to today if not passed).
-- In practice, the Bronze snapshots in this repo (see `logs/` and `gold/`
-  filenames) were captured across **2026-06-23 → 2026-07-30** — i.e.
-  **after** the real squad was already public knowledge. That means any
-  Selection Audit output you see from these runs is a **retrospective
-  validation exercise**, not a blind prediction, and should be read/presented
-  that way.
-- If you re-run this pipeline for a *future* decision (e.g. a hypothetical
-  2030 squad announcement), you would need to manually ensure every Bronze
-  source you scrape only reflects information available before that date —
-  the pipeline does not currently guard against this for you.
-
-Treat "add a real, enforced `DECISION_DATE` gate across the whole pipeline"
-as a standing TODO, not a solved problem.
+**Current state of the implementation (as of 2026-08-02) — please read
+carefully, this replaces an earlier draft of this section that is no longer
+accurate:**
+- `config.py` defines a single project-wide constant,
+  `DECISION_DATE: date = date(2026, 5, 25)` — the day **before** the real
+  announcement, so nothing dated on/after announcement day can leak back
+  into a tool meant to support that decision.
+- It **is** wired through the live path end-to-end: `run_bronze.py`,
+  `run_sd_extractor.py`, `run_fotmob.py`, `run_sofifa.py`, and `run_gold.py`
+  all accept an `--as-of YYYY-MM-DD` flag that defaults to
+  `config.DECISION_DATE` when omitted; `run_injury_predictor.py` exposes the
+  equivalent as `--reference-date`. Every date-relative computation on the
+  live path (injury lookback windows, ClubElo snapshot date, age
+  calculations) resolves against this date, never against
+  `datetime.now()`/`date.today()`.
+- This constant has regressed silently at least twice across delivered
+  archives (full history in `CHANGELOG.md`, entry `01_temporal_cutoff.md`)
+  — once by 7 of 8 touched files being reverted wholesale, once by the date
+  itself being quietly moved to `2026-06-01` (**after** the real
+  announcement, which would have defeated the whole point). **If you are
+  auditing a fresh copy of this repo, do not trust this section — grep
+  `config.py` for `DECISION_DATE` and re-run
+  `pytest tests/test_temporal_cutoff.py -v` yourself.**
+- **Scope, on purpose:** `analytics/opponent_analyzer.py`,
+  `analytics/rotation_strategy.py`, and `analytics/ml/selection_classifier.py`
+  (dashboard pages Fitness & Rotation / Competition Context / Selection
+  Audit) intentionally use **real, post-tournament** data — an audit tool
+  has to see the actual outcome to audit against it. Only the live
+  Bronze → Silver → Gold → DSSScore path is gated by `DECISION_DATE`.
+- **Still open:** a live network re-run against transfermarkt.com /
+  api.clubelo.com to confirm `inj_last_date.max() <= DECISION_DATE` on a
+  fresh export has not been possible from a network-sandboxed environment —
+  the unit-level guarantee is tested, the live end-to-end one is not yet
+  independently re-verified.
 
 ---
 
@@ -78,7 +92,7 @@ Bronze (raw, per-source)  →  Silver (normalized, joined)  →  Gold (scored, r
         │                                                          └─ Rotation Strategy (rule-based)
         │                                                                 │
         └── Optional: ClubElo (Gold-time, --use-clubelo)                  ▼
-                                                                    Streamlit Dashboard (11 pages)
+                                                              Streamlit Dashboard (Home + 11 pages, 🔒 auth-gated)
 ```
 
 ### Bronze layer — 11 sources orchestrated by `run_bronze.py`, + 3 standalone scripts
@@ -164,21 +178,42 @@ column change, don't hand-edit it).
 | Selection Audit | `run_selection_audit.py` | Real ML — LOOCV logistic regression comparing DSSScore ranking against Morocco's actual announced 2026 squad. Based on a single n=1 trial (one coach's one squad announcement) — see the temporal-constraint note above. |
 | Rotation Strategy | `run_rotation_strategy.py` | Rule-based, transparent composite index for group-stage rotation planning. Validated against Morocco's real Group C schedule (Brazil, Scotland, Haiti) when available. |
 
-### Dashboard (11 pages, `streamlit run dashboard/app.py`)
+### Dashboard (Home + 11 pages, `streamlit run dashboard/app.py`)
 
-| Page | Purpose |
-|---|---|
-| Home (`app.py`) | Executive overview |
-| Player Analysis | Per-player deep dive |
-| Chemistry Matrix | Pairwise chemistry scores |
-| Final Squad | The recommended top-26 |
-| Selection Audit | DSSScore vs. the real 2026 squad |
-| Fitness & Rotation | Injury risk + rotation view |
-| Tactical Board | Formation/tactical layout |
-| Public Sentiment | SentimentScore breakdown |
-| Competition Context | Opponent/group analysis |
-| Set Piece & Clutch | Set-piece and pressure performance |
-| Squad Builder | Interactive manual squad construction |
+🔒 **Password-gated since 2026-08-02** (`dashboard/auth.py`, spec
+`06_authentication.md`) — every page, including this one, calls
+`require_auth()` before rendering any data. Copy
+`.streamlit/secrets.toml.example` → `.streamlit/secrets.toml` and set a real
+`APP_PASSWORD` before running; the app **fails closed** (blocks with a
+config error) if the file or key is missing, it does not silently allow
+access. **Change the placeholder password before any non-localhost
+deployment.** This is a single shared password (no per-user accounts or
+access log) — see `dashboard/auth.py`'s own docstring for the documented
+scope limits.
+
+| Page | File | Purpose |
+|---|---|---|
+| Home | `app.py` | Executive overview |
+| Player Analysis | `pages/2_player_analysis.py` | Per-player deep dive |
+| Chemistry Matrix | `pages/3_chemistry.py` | Pairwise chemistry scores |
+| Final Squad | `pages/4_final_squad.py` | The recommended top-26 |
+| Selection Audit | `pages/5_selection_audit.py` | DSSScore vs. the real 2026 squad |
+| Fitness & Rotation | `pages/6_fitness.py` | Injury risk + rotation view |
+| Tactical Board | `pages/6_tactical_board.py` | Premium HTML/CSS lineup view (formation/tactical layout) |
+| Public Sentiment | `pages/7_sentiment.py` | SentimentScore breakdown |
+| Competition Context | `pages/8_competition.py` | Opponent/group analysis |
+| Historical Trend View | `pages/9_trend_history.py` | DSSScore trend across successive Gold runs — **missing from earlier drafts of this table, added back here** |
+| Set Piece & Clutch | `pages/10_setpiece_clutch.py` | Set-piece and pressure performance |
+| Squad Builder | `pages/11_squad_builder.py` | Interactive manual squad construction |
+
+⚠️ Note the two files both prefixed `6_` (`6_fitness.py` and
+`6_tactical_board.py`) — this is a real naming collision in the current
+tree, not a typo in this README. It doesn't break either page individually,
+but it does mean their relative order in Streamlit's sidebar nav is decided
+by alphabetical tie-break (`fitness` before `tactical_board`) rather than by
+an explicit, unambiguous number. Worth a rename (`6_` / `7_` → shift
+everything after) in a future cleanup pass — flagged here, not fixed here,
+since it's outside this spec's scope.
 
 ---
 
@@ -199,16 +234,27 @@ football_atlas/
 │   ├── peak_detector.py
 │   └── set_piece_analyzer.py
 ├── dashboard/
-│   ├── app.py                      # Streamlit home page
-│   ├── pages/                      # 10 additional pages
+│   ├── app.py                      # Streamlit home page (calls require_auth() first)
+│   ├── auth.py                     # Password gate (spec 06_authentication.md) — imported by every page
+│   ├── pages/                      # 11 additional pages (see Dashboard table above)
 │   ├── data_loader.py
-│   ├── pitch_renderer.py
+│   ├── pitch_renderer.py           # matplotlib/mplsoccer pitch (legacy pages)
+│   ├── pitch_renderer_html.py      # premium HTML/CSS pitch (Tactical Board redesign)
+│   ├── notes_store.py              # coach notes persistence
+│   ├── report_utils.py
+│   ├── i18n.py
+│   ├── components.py
 │   └── sidebar.py
 ├── seeds/
 │   └── players_49.csv              # 49 candidate players with all cross-source IDs
 ├── scripts/
 │   └── collect_ids.py              # Resolve missing understat/sofascore/flashscore IDs
-├── tests/                          # pytest suite (285 tests as of this writing — see `make test`)
+├── tests/                          # pytest suite — 452 tests collected in this audit
+│                                    #   (3 files need optional extras not pinned tight enough
+│                                    #   to auto-install: mplsoccer, rapidfuzz, googleapiclient —
+│                                    #   see `make test` / `docs/architecture.md`. CHANGELOG.md's
+│                                    #   last full run: 400 passed / 9 known-failing as of 2026-08-02;
+│                                    #   re-verify with `pytest tests/ -q` before quoting a number)
 ├── config.py                       # All weights, normalization bounds, thresholds — single source of truth
 ├── run_bronze.py                   # Bronze orchestrator (11 in-script sources)
 ├── run_sd_extractor.py             # Standalone — SofaScore detail column extraction
@@ -285,6 +331,10 @@ make ml-rotation
 ### 6. Dashboard
 
 ```bash
+# First time only — the dashboard is password-gated (see § above):
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+# then edit .streamlit/secrets.toml and set APP_PASSWORD to something real
+
 make dashboard
 ```
 
@@ -298,9 +348,16 @@ make test        # pytest tests/ -q — full suite
 
 ## Known limitations / roadmap
 
-- **`DECISION_DATE` is not yet a real, enforced pipeline-wide gate** — see
-  the section at the top. This is the highest-priority item to close before
-  treating Selection Audit output as anything other than retrospective.
+- **`DECISION_DATE` is enforced on the live path** (see the section at the
+  top) but has a documented history of silently regressing between
+  delivered archives — treat `tests/test_temporal_cutoff.py` passing as the
+  source of truth, not this document. Live-network re-verification
+  (transfermarkt.com / api.clubelo.com) of the end-to-end cutoff is still
+  outstanding.
+- **Dashboard access control is a single shared password**, no per-user
+  accounts and no access log (`dashboard/auth.py`) — fine for one
+  coaching-staff group, not sufficient if individual accountability is ever
+  required.
 - `SentimentScore`'s collector + NLP pipeline is untested end-to-end against
   live services.
 - `--use-clubelo` in `run_gold.py` has untested live-fetch behavior from

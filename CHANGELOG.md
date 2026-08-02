@@ -91,6 +91,176 @@ CURRENT archive. If they fail, the fix has regressed.
   from this sandboxed environment; the placeholder password in
   `.streamlit/secrets.toml` MUST be changed before any such deployment.
 
+#### 6. Tactical Board redesign — premium HTML/CSS pitch (design request, no numbered spec file)
+- **Files:** `dashboard/pitch_renderer_html.py` (new), `dashboard/pages/6_tactical_board.py`.
+- **Symptom:** the Tactical Board's pitch was a plain matplotlib/mplsoccer
+  image (`st.pyplot`) — flat colored circle markers, no hover states, no
+  entrance animation, no gradients or depth. Requested redesign to a
+  "premium football analytics platform" look (UEFA/Sofascore/FotMob-style
+  lineup graphics) while keeping formation math and XI selection
+  unchanged.
+- **Root constraint:** a matplotlib figure is a static raster/vector
+  image — no styling of it can add CSS gradients, hover states, or
+  animation, full stop. Confirmed with the user before building (see
+  chat) that the rendering TECHNOLOGY had to change (HTML/CSS component
+  instead of `st.pyplot`) to satisfy the brief, while
+  `dashboard/pitch_renderer.py`'s `assign_xi_to_formation()`, `FORMATIONS`,
+  and `render_pitch()` stay completely untouched — new file, not an edit,
+  specifically so the 19 tests in `tests/test_pitch_renderer.py` that
+  protect that module needed zero changes.
+- **Coordinate-system correction found along the way:** this project's own
+  `FORMATIONS` comment described the pitch as "0-100 (length) x 0-80
+  (width)". Checked directly against the installed `mplsoccer` version
+  (`Pitch(pitch_type="opta").dim`) — the real coordinate space is 0-100 x
+  0-100 (normalized on both axes), with the true 105m x 68m pitch shape
+  applied by mplsoccer only at draw time, not baked into the coordinate
+  values. `dashboard/pitch_renderer_html.py` uses the corrected 0-100 x
+  0-100 mapping (`left% = x`, `top% = y`) so the new renderer reproduces
+  the *exact same* visual layout mplsoccer already produced, not a
+  distorted one. `FORMATIONS`' actual coordinate values were not touched
+  — only this module's understanding of how to map them to CSS percentages.
+- **Fix:** `render_pitch_html()` takes the same assigned-slot data
+  `render_pitch()` always took and returns a self-contained HTML document
+  — dark radial-gradient panel, a mowed-stripe grass pitch (CSS
+  `repeating-linear-gradient`) with SVG markings (boundary, halfway line,
+  center circle, both penalty/six-yard boxes, penalty spots — sized as
+  percentages of real pitch dimensions so they render as true
+  circles/rectangles once the container's `aspect-ratio: 105/68` stretches
+  the 0-100 coordinate space into the real pitch shape), circular player
+  photos with a position-colored gradient ring (base64-embedded via
+  `find_player_photo()` — reused, not reimplemented, so both renderers
+  agree on "does this player have a photo"), a staggered fade+rise-in
+  entrance animation per player, and a hover tooltip (name/position/club/
+  DSSScore). Players without a photo get a gradient+initials badge instead
+  of a plain colored circle. `dashboard/pages/6_tactical_board.py`'s XI
+  selection logic (`slot_counts`, "Best XI by DSSScore" pooling,
+  "Rotation Strategy match" handling, the `assign_xi_to_formation()` call
+  itself) is byte-identical to the pre-redesign version — diffed to
+  confirm before considering this done; only imports, the `require_auth()`
+  call (spec #6, entry #5 above), setup-panel container styling, and the
+  final render call changed.
+- **Deprecation caught during testing:** the redesign was originally built
+  on `st.components.v1.html` per the initial plan, but a live AppTest run
+  against the installed Streamlit surfaced `st.components.v1.html will be
+  removed after 2026-06-01` — already past due on today's date. Switched
+  to `st.iframe()` (current API, and actually better here: `height="content"`
+  auto-sizes to the real content height instead of a guessed pixel value)
+  with a `hasattr(st, "iframe")` fallback to `components.html()` for an
+  older Streamlit install that predates it.
+- **Not verified:** no headless browser was available in the sandbox this
+  was built in to screenshot the actual rendered pitch — verified the
+  generated HTML is well-formed (no broken template braces, valid CSS) and
+  that the page runs end-to-end with zero exceptions via AppTest, but the
+  visual result (spacing, gradients, animation timing) needs a real look
+  in a browser before considering this finished. A standalone preview
+  file was generated and handed to the user directly for that check.
+- **Protected by:** existing `tests/test_pitch_renderer.py` (19 tests, all
+  passing unmodified — proof the matplotlib path is untouched). No new
+  automated test added specifically for `pitch_renderer_html.py`'s visual
+  output (HTML/CSS correctness isn't meaningfully assertable without a
+  real browser); manually verified via a synthetic-data AppTest run
+  (11-player XI, mixed photo/no-photo) that the page produces zero
+  exceptions end-to-end.
+- **Verified:** `MINIO_MOCK=1 pytest tests/ -q --ignore=tests/test_sentiment_analyzer.py`
+  → 400 passed, 9 failed — identical failure set to entry #5 above (all
+  pre-existing, all unrelated).
+
+#### 7. Tactical Board v2 — zoom/pan/fullscreen, tactical spine, legend (follow-up design request)
+- **Files:** `dashboard/pitch_renderer_html.py` (extended — same file from
+  entry #6, no new file needed).
+- **Symptom:** entry #6 shipped the premium HTML/CSS pitch but had no way
+  to inspect it more closely or view it larger — user explicitly asked for
+  it to be "minimized and upscaled" and for more visual polish/ideas.
+- **Fix, in one file, `render_pitch_html()` extended (still zero change to
+  `assign_xi_to_formation()`/`FORMATIONS`/`render_pitch()`):**
+  - **Zoom + pan + fullscreen toolbar.** `transform: scale()` inside a
+    fixed-`aspect-ratio` `overflow: hidden` viewport, so zooming never
+    changes the outer box size Streamlit measured for `st.iframe`'s
+    `height="content"` — only what's drawn inside it does. Mouse-wheel
+    zoom, click +/−/reset buttons, drag-to-pan once zoomed past 100%
+    (clamped so the pitch can't be dragged fully out of view),
+    double-click to reset. Fullscreen uses the standard Fullscreen API on
+    the whole board card, with `document.fullscreenEnabled` feature
+    detection — the button hides itself instead of doing nothing on click
+    if the embedding context doesn't support it.
+  - **Tactical spine.** A thin glowing gold line connecting each present
+    formation line's centroid (GK → DEF → MID → FWD), computed in Python
+    from the exact same `x`/`y` `assign_xi_to_formation()` already
+    produced — a broadcast-graphic touch that reads the team shape at a
+    glance without a line to every individual player (would be visual
+    noise for an 11-node XI).
+  - **Position legend** (color key strip under the pitch) and a small
+    position-letter chip (GK/D/M/F) on every node — position is now
+    readable at a glance without needing to hover, not just in the
+    tooltip.
+  - **Floodlight corner glow + film-grain overlay.** Two soft radial
+    highlights at the top corners (stadium-lighting feel) and a
+    near-invisible (5% opacity, `mix-blend-mode: overlay`) SVG
+    `feTurbulence` grain texture — the "premium lighting/depth" half of
+    the original brief that entry #6 under-delivered on with only a flat
+    two-stop gradient.
+- **Verified:** regenerated the standalone preview file and re-ran the
+  same synthetic-data AppTest smoke test used for entry #6 — zero
+  exceptions. `MINIO_MOCK=1 pytest tests/ -q --ignore=tests/test_sentiment_analyzer.py`
+  → 400 passed, 9 failed, identical failure set to entries #5/#6 (still
+  all pre-existing, still all unrelated). Sanity-checked the generated
+  HTML for balanced tags and no leftover unescaped `{{`/`}}` from the
+  Python f-string templating (a real risk with this much CSS in an
+  f-string — checked for it directly rather than assuming).
+- **Not verified:** same limitation as entry #6 — no headless browser
+  available in this sandbox to actually see the zoom/pan/fullscreen
+  interactions or the grain/glow rendering. A second standalone preview
+  file was generated and handed to the user directly.
+
+#### 8. Tactical Board v3 — club badges, formation pill, broadcast-angle toggle (second follow-up)
+- **Files:** `dashboard/pitch_renderer_html.py` (extended again — same
+  file as entries #6/#7).
+- **Symptom:** user asked to pull more specifically from the 4 reference
+  images they'd shared (a tactical-pitch dashboard, a Champions League
+  "Team of the Week" graphic, a PSG/Inter combined-XI graphic, and a
+  Spain national-team Best XI graphic).
+- **What was actually reusable from those 4 images, and what wasn't:**
+  - Two of the four (the UCL and PSG/Inter graphics) show a small club
+    badge overlapping each player photo. **Real club crests are
+    trademarked logos this project has no rights to reproduce** — so
+    instead of pulling in actual crest images, added `_club_monogram()`:
+    a small generated text badge (e.g. "Paris Saint-Germain" → "PSG",
+    "West Ham" → "WH") in the same visual position (top-left, overlapping
+    the photo ring) the reference images use for a real crest. Same
+    visual read, no IP problem, and no new data dependency — reuses the
+    `club` field already flowing through the page.
+  - Stronger typographic hierarchy across all 4 images (bold condensed
+    titles, an accent bar/pill under the headline) — added a gold accent
+    underline beneath the board title and turned the formation subtitle
+    into a pill badge instead of plain text.
+  - **What was NOT actually in the reference images, flagged explicitly
+    rather than silently added:** none of the 4 are tilted/isometric —
+    all are flat top-down or straight-on graphics. A 3D "broadcast camera
+    angle" toggle was added anyway as an extra idea (common in some other
+    broadcast lineup graphics this project's brief was inspired by), but
+    kept **off by default and toggle-able**, specifically because it
+    isn't something the user's own references actually showed — a forced
+    permanent change on that basis would have been overreach. Implemented
+    as a single `perspective()`/`rotateX()` transform on the whole
+    `.pitch-viewport` (markings + players together as one flat plane, not
+    tilted independently), so nothing shifts out of alignment with the
+    percentage-based player coordinates when toggled — a naive
+    per-layer tilt would have needed real per-point 3D projection math to
+    stay aligned, which isn't verifiable without a browser to check
+    against (see "Not verified" below), so the whole-viewport approach
+    was chosen specifically to avoid shipping something that might
+    silently misalign.
+- **Verified:** `MINIO_MOCK=1 pytest tests/ -q --ignore=tests/test_sentiment_analyzer.py`
+  → 400 passed, 9 failed, identical failure set to entries #5–#7 (still
+  all pre-existing, still all unrelated). Sanity-checked the generated
+  HTML for balanced tags, no leftover unescaped `{{`/`}}`, and confirmed
+  the club-monogram logic produces the expected output on real club-name
+  strings (e.g. "Paris Saint-Germain" → "PSG").
+- **Not verified:** same limitation as entries #6/#7 — no headless
+  browser in this sandbox to see the club badges, title pill, or tilt
+  toggle actually rendered. A third standalone preview file was generated
+  and handed to the user directly for that check.
+
 ### Known issues found during this session (NOT fixed — out of scope of
 ### `06_authentication.md`, flagged for a future dedicated fix)
 - **`tests/test_dashboard_post_hoc_banner.py::test_post_hoc_banner_present_on_retrospective_pages[dashboard/pages/5_selection_audit.py]`**
