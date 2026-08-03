@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 from pathlib import Path
 
 from dashboard.pitch_renderer import find_player_photo
@@ -223,10 +224,22 @@ def render_pitch_html(
 
     assigned_players: same shape assign_xi_to_formation() already returns
         (player_id, player_name, position, x, y) — the caller MAY merge in
-        extra display-only keys (dss_score: float, club: str) before
-        calling this; both are optional and purely cosmetic (hover card).
+        extra display-only keys before calling this, all optional:
+        dss_score, club (shown in the hover tooltip and club monogram
+        badge), and performance_score/form_score/mental_score/
+        availability_score/player_dna (shown in the click-to-inspect
+        detail panel — any missing ones are just omitted from the panel,
+        never an error).
     show_photos: identical meaning/behavior to render_pitch()'s param —
         False always shows the initials marker, even if a photo exists.
+
+    Clicking a player opens an in-widget detail panel (name, position,
+    club, score breakdown, Player DNA badge). This is CLIENT-SIDE ONLY —
+    st.iframe() has no channel back into Streamlit's Python
+    session_state/rerun cycle for a plain HTML embed like this one (that
+    would need a full custom bidirectional Streamlit component), so the
+    click is fully self-contained inside this widget and does not affect
+    anything else on the page.
 
     Returns (html_string, recommended_iframe_height_px) — the height is
     only used as a fallback for callers stuck on the older
@@ -257,8 +270,26 @@ def render_pitch_html(
             meta_bits.append(f"DSS {dss:.2f}")
         meta_html = " · ".join(meta_bits)
 
+        info_payload = {
+            "name": name,
+            "position": pos,
+            "posLabel": _POSITION_LABELS.get(pos, pos),
+            "club": p.get("club") or None,
+            "dna": p.get("player_dna") or None,
+            "scores": {
+                k: round(v, 3) for k, v in {
+                    "DSS Score": p.get("dss_score"),
+                    "Performance": p.get("performance_score"),
+                    "Form": p.get("form_score"),
+                    "Mental": p.get("mental_score"),
+                    "Availability": p.get("availability_score"),
+                }.items() if isinstance(v, (int, float))
+            },
+        }
+        info_json = html.escape(json.dumps(info_payload), quote=True)
+
         cards.append(f'''
-        <div class="player-node" style="left:{p.get("x", 50):.2f}%; top:{p.get("y", 50):.2f}%; --grad-a:{grad_start}; --grad-b:{grad_end}; --delay:{i * 55}ms;">
+        <div class="player-node" data-info="{info_json}" style="left:{p.get("x", 50):.2f}%; top:{p.get("y", 50):.2f}%; --grad-a:{grad_start}; --grad-b:{grad_end}; --delay:{i * 55}ms;">
           <div class="pn-ring">
             {avatar_html}
             <span class="pn-chip">{chip}</span>
@@ -462,7 +493,15 @@ def render_pitch_html(
     opacity: 0;
     animation: node-in 480ms cubic-bezier(.2,.8,.2,1) forwards;
     animation-delay: var(--delay);
-    cursor: default;
+    cursor: pointer;
+  }}
+  .player-node.selected .pn-ring {{
+    transform: scale(1.16);
+    box-shadow:
+      0 10px 24px -4px rgba(0,0,0,0.7),
+      0 0 0 1px rgba(255,255,255,0.2),
+      0 0 0 3px rgba(9,12,17,0.85),
+      0 0 0 5px var(--accent-gold);
   }}
   @keyframes node-in {{
     from {{ opacity: 0; transform: translate(-50%, -42%) scale(0.7); }}
@@ -560,6 +599,69 @@ def render_pitch_html(
     font-size: 11px; color: var(--text-secondary); font-weight: 500;
   }}
   .legend-dot {{ width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }}
+
+  /* ── click-to-inspect detail panel ──────────────────────────────── */
+  .detail-panel {{
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height 260ms ease, opacity 200ms ease, margin-top 260ms ease;
+    border-radius: 14px;
+  }}
+  .detail-panel.open {{
+    max-height: 260px;
+    opacity: 1;
+    margin-top: 14px;
+  }}
+  .dp-body {{
+    position: relative;
+    background: radial-gradient(120% 160% at 10% -10%, #1a212c 0%, #11161d 60%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 18px;
+  }}
+  .dp-close {{
+    position: absolute; top: 10px; right: 10px; z-index: 2;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(255,255,255,0.08); border: 1px solid var(--border);
+    color: var(--text-secondary); cursor: pointer; font-size: 11px;
+  }}
+  .dp-header {{
+    display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+  }}
+  .dp-name {{
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 20px; color: var(--text-primary);
+    text-transform: uppercase; letter-spacing: 0.01em;
+  }}
+  .dp-meta {{ font-size: 12px; color: var(--text-secondary); margin-top: 1px; }}
+  .dp-dna {{
+    margin-left: auto;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+    color: var(--accent-gold); text-transform: uppercase;
+    border: 1px solid rgba(212,175,55,0.4);
+    border-radius: 999px; padding: 3px 10px;
+    white-space: nowrap;
+  }}
+  .dp-scores {{
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px 20px;
+  }}
+  .dp-score-row {{ display: flex; flex-direction: column; gap: 4px; }}
+  .dp-score-label {{
+    display: flex; justify-content: space-between;
+    font-size: 10.5px; color: var(--text-secondary); font-weight: 600;
+  }}
+  .dp-score-label b {{ color: var(--text-primary); font-weight: 700; }}
+  .dp-bar-track {{
+    height: 5px; border-radius: 999px; background: rgba(255,255,255,0.08);
+    overflow: hidden;
+  }}
+  .dp-bar-fill {{
+    height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent-gold), #f0d878);
+    transition: width 400ms ease;
+  }}
 </style>
 </head>
 <body>
@@ -579,7 +681,7 @@ def render_pitch_html(
       <div class="tb-btn" id="zoom-reset" title="Reset view">&#8634;</div>
       <div class="tb-btn" id="tilt-toggle" title="Toggle broadcast camera angle">&#127909;</div>
       <div class="tb-spacer"></div>
-      <div class="tb-hint show-hint" id="pan-hint">drag to pan when zoomed</div>
+      <div class="tb-hint show-hint" id="pan-hint">drag to pan when zoomed · click a player for details</div>
       <div class="tb-btn" id="fullscreen-btn" title="Maximize">&#9974;</div>
     </div>
 
@@ -592,6 +694,11 @@ def render_pitch_html(
     </div>
 
     <div class="board-legend">{legend_html}</div>
+
+    <div class="detail-panel" id="detail-panel">
+      <button class="dp-close" id="dp-close" title="Close">&#10005;</button>
+      <div class="dp-body" id="dp-body"></div>
+    </div>
   </div>
 
 <script>
@@ -738,6 +845,69 @@ def render_pitch_html(
   }});
 
   apply();
+
+  // ── click-to-inspect ─────────────────────────────────────────────
+  // NOTE: this is CLIENT-SIDE ONLY. st.iframe() has no return channel
+  // back into Streamlit's Python session_state/rerun cycle (that would
+  // need a full custom bidirectional component, not a plain HTML embed)
+  // — so clicking a player opens a real detail panel inside this same
+  // widget, but does not (and structurally can't, from a plain st.iframe)
+  // feed the click back into the rest of the Streamlit app.
+  var panel = document.getElementById('detail-panel');
+  var panelBody = document.getElementById('dp-body');
+  var selectedNode = null;
+
+  function scoreRow(label, value) {{
+    if (typeof value !== 'number') return '';
+    var pct = Math.max(0, Math.min(100, value * 100));
+    return '<div class="dp-score-row">' +
+      '<div class="dp-score-label"><span>' + label + '</span><b>' + pct.toFixed(0) + '</b></div>' +
+      '<div class="dp-bar-track"><div class="dp-bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+    '</div>';
+  }}
+
+  function openPanelFor(node) {{
+    var info;
+    try {{ info = JSON.parse(node.getAttribute('data-info')); }} catch (e) {{ return; }}
+    var scoreRows = Object.keys(info.scores || {{}}).map(function(k) {{
+      return scoreRow(k, info.scores[k]);
+    }}).join('');
+    panelBody.innerHTML =
+      '<div class="dp-header">' +
+        '<div>' +
+          '<div class="dp-name">' + info.name + '</div>' +
+          '<div class="dp-meta">' + info.posLabel + (info.club ? ' · ' + info.club : '') + '</div>' +
+        '</div>' +
+        (info.dna ? '<div class="dp-dna">' + info.dna + '</div>' : '') +
+      '</div>' +
+      (scoreRows ? '<div class="dp-scores">' + scoreRows + '</div>' :
+        '<div class="dp-meta">No score breakdown available for this player.</div>');
+    panel.classList.add('open');
+  }}
+
+  function closePanel() {{
+    panel.classList.remove('open');
+    if (selectedNode) selectedNode.classList.remove('selected');
+    selectedNode = null;
+  }}
+
+  document.querySelectorAll('.player-node').forEach(function(node) {{
+    node.addEventListener('click', function(e) {{
+      e.stopPropagation();
+      if (selectedNode === node) {{
+        closePanel();
+        return;
+      }}
+      if (selectedNode) selectedNode.classList.remove('selected');
+      node.classList.add('selected');
+      selectedNode = node;
+      openPanelFor(node);
+    }});
+  }});
+  document.getElementById('dp-close').addEventListener('click', closePanel);
+  viewport.addEventListener('click', function(e) {{
+    if (e.target === viewport || e.target === shell) closePanel();
+  }});
 }})();
 </script>
 </body>

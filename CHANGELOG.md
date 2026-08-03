@@ -323,6 +323,56 @@ CURRENT archive. If they fail, the fix has regressed.
   against a real Streamlit-rendered page. A fourth preview file was
   generated and handed to the user directly.
 
+#### 10. Tactical Board — click-to-inspect player detail panel
+- **Files:** `dashboard/pitch_renderer_html.py` (extended again),
+  `dashboard/pages/6_tactical_board.py` (enrichment block extended).
+- **Ask:** make players clickable, plus more ideas from the earlier
+  suggestions.
+- **Platform limitation, disclosed up front rather than discovered by the
+  user later:** `st.iframe()` embeds a plain HTML document with no return
+  channel back into Streamlit's Python `session_state`/rerun cycle — that
+  round-trip only exists for a full custom bidirectional Streamlit
+  component (`components.declare_component`, a real frontend build, not
+  an embedded HTML string), which is out of scope here. So a player click
+  cannot, from this widget, do things like navigate to another page or
+  set a value another part of the app reads. What IS fully achievable
+  client-side, and what got built: clicking a player opens an in-widget
+  detail panel — no Python round-trip needed for this, so no compromise.
+- **Fix:**
+  - `dashboard/pages/6_tactical_board.py`'s display-only enrichment block
+    (the same one from entries #6-#8 that already added `dss_score`/
+    `club`) now also merges in `PerformanceScore`, `FormScore`,
+    `MentalScore`, `AvailabilityScore`, and `PlayerDNA` from `xi_df` when
+    those columns exist — still purely additive, still joined strictly
+    AFTER `assign_xi_to_formation()` has already run, still zero change to
+    the formation logic itself (diffed against the pre-redesign original
+    again to confirm, as with every prior entry in this series).
+  - `render_pitch_html()` embeds a small JSON payload per player node
+    (`data-info` attribute) and adds a click handler: clicking opens a
+    slide-down detail card (name, position, club, a Player DNA badge, and
+    a horizontal score-bar breakdown for whichever of the 5 score fields
+    are present — any missing one is just omitted, not an error).
+    Clicking the same player again closes it; clicking a different player
+    switches; clicking empty pitch background also closes it — a small
+    real interaction model, not just a single toggle.
+- **Verified — actually executed, not just read:** extracted the
+  `<script>` block and ran `node --check` (valid syntax), then executed it
+  against a real DOM via `jsdom` and dispatched real click events —
+  confirmed, in sequence: first click opens the panel with the correct
+  player's name/DNA/score bars; clicking a second player switches the
+  selection (first node's `.selected` class is removed, panel content
+  updates to the second player); re-clicking the currently-selected
+  player closes the panel and clears the selection; clicking the pitch
+  background while a player is selected also closes it. All four
+  branches confirmed by reading the actual resulting DOM state after each
+  click, not assumed from the code.
+  `MINIO_MOCK=1 pytest tests/ -q --ignore=tests/test_sentiment_analyzer.py`
+  → 400 passed, 9 failed, identical failure set to entries #5–#9.
+- **Not verified:** the actual visual appearance/animation of the panel
+  opening in a real browser — a fifth preview file (all 11 XI slots with
+  full synthetic score data this time, not just 2) was generated and
+  handed to the user directly for that check.
+
 ### Known issues found during this session (NOT fixed — out of scope of
 ### `06_authentication.md`, flagged for a future dedicated fix)
 - **`tests/test_dashboard_post_hoc_banner.py::test_post_hoc_banner_present_on_retrospective_pages[dashboard/pages/5_selection_audit.py]`**

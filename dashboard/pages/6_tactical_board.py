@@ -123,21 +123,33 @@ with col_right:
     try:
         assigned = assign_xi_to_formation(xi_df, formation_name=formation_name)
 
-        # Display-only enrichment (DSSScore + club for the hover card) —
-        # purely cosmetic, joined AFTER assign_xi_to_formation() has
-        # already done the real slot-assignment work, so the formation
-        # logic itself never sees or needs these extra columns.
+        # Display-only enrichment (score breakdown + club + Player DNA for
+        # the click-to-inspect detail panel) — purely cosmetic, joined
+        # AFTER assign_xi_to_formation() has already done the real
+        # slot-assignment work, so the formation logic itself never sees
+        # or needs these extra columns. Each field is read defensively
+        # (xi_df may come from either XI source, and older Gold runs may
+        # lack a given column) — a missing field just means that row of
+        # the detail panel doesn't render, never a crash.
+        _EXTRA_FIELDS = [
+            "DSSScore", "club", "PerformanceScore", "FormScore",
+            "MentalScore", "AvailabilityScore", "PlayerDNA",
+        ]
         extra_by_id = {}
         if "player_id" in xi_df.columns:
             for _, row in xi_df.iterrows():
                 extra_by_id[row.get("player_id")] = {
-                    "dss_score": row.get("DSSScore"),
-                    "club": row.get("club"),
+                    f: row.get(f) for f in _EXTRA_FIELDS if f in xi_df.columns
                 }
         for p in assigned:
             extra = extra_by_id.get(p.get("player_id"), {})
-            p["dss_score"] = extra.get("dss_score")
+            p["dss_score"] = extra.get("DSSScore")
             p["club"] = extra.get("club")
+            p["performance_score"] = extra.get("PerformanceScore")
+            p["form_score"] = extra.get("FormScore")
+            p["mental_score"] = extra.get("MentalScore")
+            p["availability_score"] = extra.get("AvailabilityScore")
+            p["player_dna"] = extra.get("PlayerDNA")
 
         board_html, board_height_fallback = render_pitch_html(
             assigned, title=match_label, subtitle=formation_name, show_photos=show_photos,
