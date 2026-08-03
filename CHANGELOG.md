@@ -261,6 +261,68 @@ CURRENT archive. If they fail, the fix has regressed.
   toggle actually rendered. A third standalone preview file was generated
   and handed to the user directly for that check.
 
+#### 9. Tactical Board — working "fullscreen" via resize fallback (fullscreen button fix)
+- **Files:** `dashboard/pitch_renderer_html.py` (extended again).
+- **Symptom:** the fullscreen button added in entry #7 wasn't visibly
+  doing anything for the user.
+- **Root cause, found by actually reading Streamlit's own installed
+  frontend bundle rather than guessing:** `st.iframe()` renders the
+  embedded HTML inside a *sandboxed* iframe. Checked
+  `streamlit/static/static/js/IFrameUtil.*.js` directly in the installed
+  package — the `sandbox` attribute it sets is
+  `allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox
+  allow-same-origin allow-scripts allow-downloads`. **No `allow-fullscreen`
+  token.** Per the WHATWG sandbox spec, that blocks the real Fullscreen
+  API from inside the iframe regardless of the `allow="...fullscreen..."`
+  Permissions-Policy attribute also being set on the same iframe (a common
+  gotcha — the two are separate mechanisms, and both have to allow it).
+  Confirmed directly: `document.fullscreenEnabled` is `false` in this
+  context, which is exactly what entry #7's own feature-detection was
+  correctly reading — the button was quietly disabling itself as designed,
+  not malfunctioning.
+- **Fix:** since `st.iframe`'s own component (same bundle,
+  `IFrame.*.js`) already auto-resizes the real `<iframe>` element on the
+  page to match the embedded document's measured size (via a
+  `postMessage`-based `MutationObserver`, for `height="content"` mode),
+  clicking the button now — when real Fullscreen is unavailable, which is
+  the normal case here — sets a much larger inline height/width on the
+  pitch viewport instead (computed from `window.top.innerWidth/Height`,
+  reachable because `allow-same-origin` IS in the sandbox list, with a
+  same-origin-access try/catch fallback to `window.innerHeight` if that
+  ever isn't true). That resize is a real DOM mutation, the existing
+  auto-resize script picks it up, and the actual `<iframe>` on the
+  rendered Streamlit page grows to match — this genuinely enlarges the
+  board on the page, it isn't a same-size overlay pretending to be bigger.
+  Real `requestFullscreen()` is still attempted FIRST (with a promise
+  `.catch()` that falls back to the resize approach if a future
+  Streamlit/embedding context reports `fullscreenEnabled: true` but still
+  rejects the actual request), so this upgrades automatically if
+  Streamlit ever adds the sandbox token.
+- **Disclosed limitation, not silently smoothed over:** this is a
+  "maximize within the page" experience, not true OS-level fullscreen —
+  the browser chrome and (depending on where the iframe sits in the page)
+  Streamlit's own sidebar/header may still be visible around it. That's
+  the honest ceiling of what's achievable from inside a sandboxed iframe
+  without a `allow-fullscreen` token Streamlit's own component doesn't
+  set, not a corner that was cut.
+- **Verified:** extracted the actual `<script>` content and ran
+  `node --check` (valid syntax), then actually EXECUTED it against a real
+  DOM via `jsdom` (not just read the code) — dispatched clicks on every
+  toolbar control (zoom in/out/reset, tilt toggle, maximize, restore) and
+  confirmed each one produces the expected state with zero runtime
+  exceptions, including specifically the maximize→restore round-trip
+  (inline `width`/`height` are set on click, and fully cleared back to
+  empty string on the second click, confirmed by reading
+  `viewport.style.height` before/after both clicks — not just assuming
+  the restore branch runs correctly).
+  `MINIO_MOCK=1 pytest tests/ -q --ignore=tests/test_sentiment_analyzer.py`
+  → 400 passed, 9 failed, identical failure set to entries #5–#8.
+- **Not verified:** the actual on-page enlarging effect and visual
+  quality of the resulting layout — jsdom confirms the JS logic and DOM
+  state changes are correct, but not what it looks like in a real browser
+  against a real Streamlit-rendered page. A fourth preview file was
+  generated and handed to the user directly.
+
 ### Known issues found during this session (NOT fixed — out of scope of
 ### `06_authentication.md`, flagged for a future dedicated fix)
 - **`tests/test_dashboard_post_hoc_banner.py::test_post_hoc_banner_present_on_retrospective_pages[dashboard/pages/5_selection_audit.py]`**

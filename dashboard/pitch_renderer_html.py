@@ -314,6 +314,19 @@ def render_pitch_html(
     width: 100vw; height: 100vh; border-radius: 0;
     padding: 28px;
   }}
+  /* Fallback "maximize" — used when the real Fullscreen API is blocked
+     (Streamlit's st.iframe sandbox doesn't include the allow-fullscreen
+     token, so document.fullscreenEnabled is false in practice — see
+     pitch_renderer_html.py's module docstring). Height is set via inline
+     style by JS (computed from the real browser viewport, read through
+     window.top since the sandboxed iframe has allow-same-origin) rather
+     than a fixed CSS value, then Streamlit's own iframe auto-resize
+     mechanism grows the REAL <iframe> on the page to match — this
+     actually enlarges the embedded board on the page, not just a
+     same-size overlay. */
+  .board-wrap.is-maxed {{
+    display: flex; flex-direction: column;
+  }}
   .board-header {{
     display: flex; align-items: flex-start; justify-content: space-between;
     margin-bottom: 16px; padding: 0 4px; gap: 12px;
@@ -567,7 +580,7 @@ def render_pitch_html(
       <div class="tb-btn" id="tilt-toggle" title="Toggle broadcast camera angle">&#127909;</div>
       <div class="tb-spacer"></div>
       <div class="tb-hint show-hint" id="pan-hint">drag to pan when zoomed</div>
-      <div class="tb-btn" id="fullscreen-btn" title="Fullscreen">&#9974;</div>
+      <div class="tb-btn" id="fullscreen-btn" title="Maximize">&#9974;</div>
     </div>
 
     <div class="pitch-viewport" id="pitch-viewport">
@@ -641,25 +654,88 @@ def render_pitch_html(
     shell.classList.remove('is-panning');
   }});
 
+  // Fullscreen / Maximize
+  // ─────────────────────────────────────────────────────────────────
+  // The real Fullscreen API is usually BLOCKED here: st.iframe renders
+  // this inside a sandboxed iframe whose sandbox tokens don't include
+  // "allow-fullscreen" (checked directly against the installed
+  // Streamlit's own frontend bundle — see this file's module docstring),
+  // so document.fullscreenEnabled is normally false no matter what this
+  // script does. Real Fullscreen is still attempted first in case a
+  // future Streamlit version or a different embedding context allows it;
+  // when it's blocked, this falls back to actually RESIZING the real
+  // <iframe> element on the page instead of a same-size overlay:
+  // Streamlit's iframe component watches the embedded document's size via
+  // postMessage and grows the iframe to match (see IFrame.*.js in the
+  // installed package) — so setting a much bigger inline height here and
+  // letting that mechanism report it genuinely enlarges the board on the
+  // real page, not just inside an unchanged-size box.
   var fsBtn = document.getElementById('fullscreen-btn');
-  if (!document.fullscreenEnabled && !document.webkitFullscreenEnabled) {{
-    fsBtn.style.display = 'none';
-  }} else {{
-    fsBtn.addEventListener('click', function() {{
+  var realFullscreenOK = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+  var maxed = false;
+  var naturalHeight = null;
+
+  function topViewport() {{
+    try {{
+      if (window.top && window.top !== window) {{
+        return {{ w: window.top.innerWidth, h: window.top.innerHeight }};
+      }}
+    }} catch (e) {{ /* cross-origin — fall through */ }}
+    return {{ w: window.innerWidth, h: window.innerHeight }};
+  }}
+
+  function enterMaximize() {{
+    if (naturalHeight === null) naturalHeight = wrap.getBoundingClientRect().height;
+    var vp = topViewport();
+    var targetH = Math.max(naturalHeight, vp.h - 90);
+    var overhead = wrap.querySelector('.board-header').getBoundingClientRect().height
+      + wrap.querySelector('.board-toolbar').getBoundingClientRect().height
+      + wrap.querySelector('.board-legend').getBoundingClientRect().height
+      + 70;
+    var pitchTargetH = Math.max(240, targetH - overhead);
+    var pitchTargetW = pitchTargetH * (105 / 68);
+    viewport.style.height = pitchTargetH + 'px';
+    viewport.style.width = Math.min(pitchTargetW, vp.w - 80) + 'px';
+    viewport.style.aspectRatio = 'unset';
+    viewport.style.margin = '0 auto';
+    wrap.classList.add('is-maxed');
+    maxed = true;
+    fsBtn.title = 'Restore';
+    fsBtn.style.background = 'rgba(212,175,55,0.22)';
+  }}
+
+  function exitMaximize() {{
+    viewport.style.height = '';
+    viewport.style.width = '';
+    viewport.style.aspectRatio = '';
+    viewport.style.margin = '';
+    wrap.classList.remove('is-maxed');
+    maxed = false;
+    fsBtn.title = 'Maximize';
+    fsBtn.style.background = '';
+  }}
+
+  fsBtn.addEventListener('click', function() {{
+    if (realFullscreenOK) {{
       var isFs = document.fullscreenElement || document.webkitFullscreenElement;
       if (!isFs) {{
-        (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap);
+        (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap).catch(function() {{
+          realFullscreenOK = false;  // request rejected despite the check — fall back from now on
+          maxed ? exitMaximize() : enterMaximize();
+        }});
       }} else {{
         (document.exitFullscreen || document.webkitExitFullscreen).call(document);
       }}
-    }});
-    document.addEventListener('fullscreenchange', function() {{
-      wrap.classList.toggle('is-fullscreen', !!document.fullscreenElement);
-    }});
-    document.addEventListener('webkitfullscreenchange', function() {{
-      wrap.classList.toggle('is-fullscreen', !!document.webkitFullscreenElement);
-    }});
-  }}
+    }} else {{
+      maxed ? exitMaximize() : enterMaximize();
+    }}
+  }});
+  document.addEventListener('fullscreenchange', function() {{
+    wrap.classList.toggle('is-fullscreen', !!document.fullscreenElement);
+  }});
+  document.addEventListener('webkitfullscreenchange', function() {{
+    wrap.classList.toggle('is-fullscreen', !!document.webkitFullscreenElement);
+  }});
 
   apply();
 }})();
