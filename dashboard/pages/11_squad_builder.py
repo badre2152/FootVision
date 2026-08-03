@@ -24,7 +24,7 @@
 # not a partial/fake version of the actual feature (manual override +
 # live automatic scoring) that feature was actually meant to enable.
 #
-# Same sub-position caveat as dashboard/pages/9_tactical_board.py applies:
+# Same sub-position caveat as dashboard/pages/06_tactical_board.py applies:
 # slots within DEF/MID/FWD are generic (no LB/CB/RB or DM/AM distinction),
 # since this project's `position` column doesn't have that granularity.
 
@@ -40,7 +40,7 @@ from dashboard.sidebar import render_sidebar
 from dashboard.auth import require_auth
 from dashboard.notes_store import get_all_notes
 from dashboard.report_utils import csv_download_button
-from analytics.competition_context import build_best_xi, FORMATIONS
+from analytics.scouting.competition_context import build_best_xi, FORMATIONS
 
 st.set_page_config(page_title="Football Atlas — Squad Builder", page_icon="🛠️", layout="wide")
 require_auth()  # spec #6 — must run before render_sidebar()/any data load below

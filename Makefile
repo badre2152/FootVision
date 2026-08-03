@@ -17,7 +17,7 @@ help:
 	@echo ""
 	@echo "  make install             Install Python dependencies"
 	@echo "  make start               Start local MinIO (Docker) — skipped if unavailable"
-	@echo "  make bronze              Run in-script Bronze ingestion (11 sources; see --skip-* flags in run_bronze.py)"
+	@echo "  make bronze              Run in-script Bronze ingestion (11 sources; see --skip-* flags in pipelines/bronze/run_bronze.py)"
 	@echo "  make bronze-test         Quick test: 3 players, mock storage"
 	@echo "  make bronze-fast         Skip slow scrapers (Understat + SofaScore)"
 	@echo "  make bronze-sd-extractor Run SofaScore detail extractor (separate script — run this first)"
@@ -37,7 +37,7 @@ help:
 	@echo ""
 	@echo "  Note: bronze-sd-extractor / bronze-fotmob / bronze-sofifa are NOT part of"
 	@echo "  'make bronze' or 'make pipeline' — they are separate manual scripts not"
-	@echo "  covered by run_bronze.py (see RUN_INSTRUCTIONS.md). Run them in order:"
+	@echo "  covered by pipelines/bronze/run_bronze.py (see RUN_INSTRUCTIONS.md). Run them in order:"
 	@echo "  bronze-sd-extractor -> bronze-fotmob -> bronze-sofifa."
 
 install:
@@ -53,53 +53,53 @@ stop:
 	@docker --version > /dev/null 2>&1 && docker-compose down || true
 
 bronze:
-	MINIO_MOCK=0 python run_bronze.py
+	MINIO_MOCK=0 python -m pipelines.bronze.run_bronze
 
 bronze-test:
 	@echo "Running Bronze in TEST MODE (3 players, filesystem mock)..."
-	MINIO_MOCK=1 python run_bronze.py --limit 3 --fail-fast \
+	MINIO_MOCK=1 python -m pipelines.bronze.run_bronze --limit 3 --fail-fast \
 		--skip-statsbomb --skip-wikidata
 
 bronze-fast:
-	MINIO_MOCK=1 python run_bronze.py \
+	MINIO_MOCK=1 python -m pipelines.bronze.run_bronze \
 		--skip-understat --skip-sofascore --skip-statsbomb --skip-wikidata
 
-# NOTE: none of run_sofifa.py / run_fotmob.py / run_sd_extractor.py expose an
+# NOTE: none of run_sofifa / run_fotmob / run_sd_extractor expose an
 # --as-of flag (confirmed via each script's own --help — see spec #8).
 # DECISION_DATE is therefore defined above but deliberately NOT passed to
 # these commands; doing so would just fail with "unrecognized arguments".
-# Order matters — run_fotmob.py must run AFTER run_sd_extractor.py (see
+# Order matters — run_fotmob must run AFTER run_sd_extractor (see
 # RUN_INSTRUCTIONS.md § 2).
 bronze-sd-extractor:
-	python run_sd_extractor.py
+	python -m pipelines.bronze.run_sd_extractor
 
 bronze-fotmob:
-	python run_fotmob.py
+	python -m pipelines.bronze.run_fotmob
 
 bronze-sofifa:
-	python run_sofifa.py
+	python -m pipelines.bronze.run_sofifa
 
 silver:
-	MINIO_MOCK=0 python run_silver.py
+	MINIO_MOCK=0 python -m pipelines.silver.run_silver
 
 gold:
-	MINIO_MOCK=1 python run_gold.py --top-n 26
+	MINIO_MOCK=1 python -m pipelines.gold.run_gold --top-n 26
 
 pipeline: bronze silver gold
 	@echo "✓ Pipeline complete: bronze -> silver -> gold"
 
 ml-dna:
-	python run_player_dna.py
+	python -m pipelines.ml.run_player_dna
 
 # --reference-date is the one real "as-of" hook in the project today.
 ml-injury:
-	python run_injury_predictor.py --reference-date $(DECISION_DATE)
+	python -m pipelines.ml.run_injury_predictor --reference-date $(DECISION_DATE)
 
 ml-selection-audit:
-	python run_selection_audit.py
+	python -m pipelines.ml.run_selection_audit
 
 ml-rotation:
-	python run_rotation_strategy.py
+	python -m pipelines.ml.run_rotation_strategy
 
 dashboard:
 	streamlit run dashboard/app.py

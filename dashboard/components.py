@@ -5,9 +5,9 @@
 #
 # WHY THIS FILE EXISTS
 # ─────────────────────────────────────────────────────────────────────────
-# dashboard/pages/5_selection_audit.py's title already makes clear it's a
+# dashboard/pages/04_selection_audit.py's title already makes clear it's a
 # retrospective comparison ("... vs. the Real 2026 World Cup Squad"), but
-# dashboard/pages/8_competition.py's "Morocco's Real WC2026 Run" tab showed
+# dashboard/pages/08_competition.py's "Morocco's Real WC2026 Run" tab showed
 # real match results (post-tournament, post-DECISION_DATE information) with
 # NO warning that this is retrospective audit content, not a forward-looking
 # pre-decision recommendation — an inconsistency within the same project,

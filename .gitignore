@@ -17,12 +17,23 @@ venv/
 env/
 .venv/
 
+# Pipeline outputs (Bronze/Silver/Gold) — always regeneratable via
+# `make bronze` / `make silver` / `make gold`. Never commit generated
+# data artifacts, regardless of layer — this used to be inconsistent
+# (only gold/ was ignored while bronze/ and silver/ were committed,
+# ~52 tracked artifact files / 17MB of duplicate timestamped CSV+parquet
+# pairs). See docs/architecture.md.
+/bronze/
+/silver/
+/gold/
+!/bronze/.gitkeep
+!/silver/.gitkeep
+!/gold/.gitkeep
+
 # Logs
 logs/*.log
 !logs/.gitkeep
 
-# Gold outputs (large files — don't commit)
-gold/
 *.csv.bak
 
 # Jupyter

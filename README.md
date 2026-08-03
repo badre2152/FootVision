@@ -26,14 +26,14 @@ a single, explicit **decision date**, at or before 2026-05-26.
 **Current state of the implementation (as of 2026-08-02) — please read
 carefully, this replaces an earlier draft of this section that is no longer
 accurate:**
-- `config.py` defines a single project-wide constant,
+- `config/scoring_config.py` defines a single project-wide constant,
   `DECISION_DATE: date = date(2026, 5, 25)` — the day **before** the real
   announcement, so nothing dated on/after announcement day can leak back
   into a tool meant to support that decision.
-- It **is** wired through the live path end-to-end: `run_bronze.py`,
-  `run_sd_extractor.py`, `run_fotmob.py`, `run_sofifa.py`, and `run_gold.py`
+- It **is** wired through the live path end-to-end: `pipelines/bronze/run_bronze.py`,
+  `pipelines/bronze/run_sd_extractor.py`, `pipelines/bronze/run_fotmob.py`, `pipelines/bronze/run_sofifa.py`, and `pipelines/gold/run_gold.py`
   all accept an `--as-of YYYY-MM-DD` flag that defaults to
-  `config.DECISION_DATE` when omitted; `run_injury_predictor.py` exposes the
+  `config.DECISION_DATE` when omitted; `pipelines/ml/run_injury_predictor.py` exposes the
   equivalent as `--reference-date`. Every date-relative computation on the
   live path (injury lookback windows, ClubElo snapshot date, age
   calculations) resolves against this date, never against
@@ -44,7 +44,7 @@ accurate:**
   itself being quietly moved to `2026-06-01` (**after** the real
   announcement, which would have defeated the whole point). **If you are
   auditing a fresh copy of this repo, do not trust this section — grep
-  `config.py` for `DECISION_DATE` and re-run
+  `config/scoring_config.py` for `DECISION_DATE` and re-run
   `pytest tests/test_temporal_cutoff.py -v` yourself.**
 - **Scope, on purpose:** `analytics/opponent_analyzer.py`,
   `analytics/rotation_strategy.py`, and `analytics/ml/selection_classifier.py`
@@ -66,7 +66,7 @@ accurate:**
 - A decision-*support* tool: it scores, ranks, clusters, and flags — a human
   (coach/technical staff) still decides.
 - An offline, batch-run analytics pipeline over historical/public data.
-- A transparent scoring system — every weight lives in `config.py`, nothing
+- A transparent scoring system — every weight lives in `config/scoring_config.py`, nothing
   is a black box.
 
 **Is NOT:**
@@ -95,9 +95,9 @@ Bronze (raw, per-source)  →  Silver (normalized, joined)  →  Gold (scored, r
                                                               Streamlit Dashboard (Home + 11 pages, 🔒 auth-gated)
 ```
 
-### Bronze layer — 11 sources orchestrated by `run_bronze.py`, + 3 standalone scripts
+### Bronze layer — 11 sources orchestrated by `pipelines/bronze/run_bronze.py`, + 3 standalone scripts
 
-`run_bronze.py` runs these 11 sources internally (each individually
+`pipelines/bronze/run_bronze.py` runs these 11 sources internally (each individually
 skippable via `--skip-<name>`):
 
 | Source | What it provides |
@@ -118,14 +118,14 @@ Optional sentiment collectors (off by default, `--enable-*`): Reddit (via
 Arctic Shift — no credentials needed since Reddit's official API access
 closed), YouTube, NewsAPI.
 
-Three sources are **not** covered by `run_bronze.py` and must be run as
+Three sources are **not** covered by `pipelines/bronze/run_bronze.py` and must be run as
 separate scripts (see Quick Start below):
 
 | Script | What it does |
 |---|---|
-| `run_sd_extractor.py` | Not a new external source — extracts structured per-90 columns (`sd_*`) from the raw `sofascore_detail` Bronze JSON. Must run before `run_silver.py`. |
-| `run_fotmob.py` | Fotmob loader. |
-| `run_sofifa.py` | SoFIFA loader (Playwright-based; needs `playwright install chromium`). |
+| `pipelines/bronze/run_sd_extractor.py` | Not a new external source — extracts structured per-90 columns (`sd_*`) from the raw `sofascore_detail` Bronze JSON. Must run before `pipelines/silver/run_silver.py`. |
+| `pipelines/bronze/run_fotmob.py` | Fotmob loader. |
+| `pipelines/bronze/run_sofifa.py` | SoFIFA loader (Playwright-based; needs `playwright install chromium`). |
 
 Optionally, `run_gold.py --use-clubelo` can replace the hardcoded league
 difficulty table with live ClubElo ratings (`ingestion/loaders/clubelo_loader.py`).
@@ -135,7 +135,7 @@ before trusting it.
 
 That's **14+ distinct sources** feeding the pipeline in total.
 
-### Silver layer (`run_silver.py`)
+### Silver layer (`pipelines/silver/run_silver.py`)
 
 Reads every Bronze source from MinIO, resolves conflicting/overlapping
 columns via `COALESCE` chains (e.g. `form_final = COALESCE(sofascore_form_5,
@@ -143,20 +143,20 @@ flashscore_form_5)`), validates coverage, and writes a single normalized
 `silver/players_silver_*.parquet` (+ CSV) table — one row per candidate
 player.
 
-### Gold layer (`run_gold.py`)
+### Gold layer (`pipelines/gold/run_gold.py`)
 
 Computes a 9-component composite **DSSScore** per player (weights live in
-`config.py`'s `COMPOSITE_WEIGHTS`):
+`config/scoring_config.py`'s `COMPOSITE_WEIGHTS`):
 
 `PerformanceScore`, `TacticalFitScore`, `FormScore`, `MentalScore`,
 `AvailabilityScore`, `ChemistryScore`, `PressureIndex`, `FlexibilityScore`,
 `SentimentScore`.
 
 Outputs: full scored table, top-26 recommended squad, and a JSON summary
-(position breakdown + flagged risks). `run_gold.py` also runs Player DNA
+(position breakdown + flagged risks). `pipelines/gold/run_gold.py` also runs Player DNA
 clustering inline and rebuilds its own Silver internally from whatever is
 currently in MinIO Bronze — it does not depend on a prior local
-`run_silver.py` run (though results should match if Bronze hasn't changed
+`pipelines/silver/run_silver.py` run (though results should match if Bronze hasn't changed
 between the two).
 
 ⚠️ `SentimentScore`'s pipeline (3 collectors + 4 NLP models) is explicitly
@@ -173,10 +173,10 @@ column change, don't hand-edit it).
 
 | Module | Entry point | Nature |
 |---|---|---|
-| Player DNA | `run_player_dna.py` | Real ML — K-Means clustering (auto-k via silhouette, k=3..6). Descriptive/exploratory only — explicitly **not** a selection input. |
-| Injury Risk Index | `run_injury_predictor.py` | Rule-based, transparent composite index. Cutoffs are illustrative, not calibrated against labeled outcomes. |
-| Selection Audit | `run_selection_audit.py` | Real ML — LOOCV logistic regression comparing DSSScore ranking against Morocco's actual announced 2026 squad. Based on a single n=1 trial (one coach's one squad announcement) — see the temporal-constraint note above. |
-| Rotation Strategy | `run_rotation_strategy.py` | Rule-based, transparent composite index for group-stage rotation planning. Validated against Morocco's real Group C schedule (Brazil, Scotland, Haiti) when available. |
+| Player DNA | `pipelines/ml/run_player_dna.py` | Real ML — K-Means clustering (auto-k via silhouette, k=3..6). Descriptive/exploratory only — explicitly **not** a selection input. |
+| Injury Risk Index | `pipelines/ml/run_injury_predictor.py` | Rule-based, transparent composite index. Cutoffs are illustrative, not calibrated against labeled outcomes. |
+| Selection Audit | `pipelines/ml/run_selection_audit.py` | Real ML — LOOCV logistic regression comparing DSSScore ranking against Morocco's actual announced 2026 squad. Based on a single n=1 trial (one coach's one squad announcement) — see the temporal-constraint note above. |
+| Rotation Strategy | `pipelines/ml/run_rotation_strategy.py` | Rule-based, transparent composite index for group-stage rotation planning. Validated against Morocco's real Group C schedule (Brazil, Scotland, Haiti) when available. |
 
 ### Dashboard (Home + 11 pages, `streamlit run dashboard/app.py`)
 
@@ -194,15 +194,15 @@ scope limits.
 | Page | File | Purpose |
 |---|---|---|
 | Home | `app.py` | Executive overview |
-| Player Analysis | `pages/2_player_analysis.py` | Per-player deep dive |
-| Chemistry Matrix | `pages/3_chemistry.py` | Pairwise chemistry scores |
-| Final Squad | `pages/4_final_squad.py` | The recommended top-26 |
-| Selection Audit | `pages/5_selection_audit.py` | DSSScore vs. the real 2026 squad |
-| Fitness & Rotation | `pages/6_fitness.py` | Injury risk + rotation view |
-| Tactical Board | `pages/6_tactical_board.py` | Premium HTML/CSS lineup view (formation/tactical layout) |
-| Public Sentiment | `pages/7_sentiment.py` | SentimentScore breakdown |
-| Competition Context | `pages/8_competition.py` | Opponent/group analysis |
-| Historical Trend View | `pages/9_trend_history.py` | DSSScore trend across successive Gold runs — **missing from earlier drafts of this table, added back here** |
+| Player Analysis | `pages/01_player_analysis.py` | Per-player deep dive |
+| Chemistry Matrix | `pages/02_chemistry.py` | Pairwise chemistry scores |
+| Final Squad | `pages/03_final_squad.py` | The recommended top-26 |
+| Selection Audit | `pages/04_selection_audit.py` | DSSScore vs. the real 2026 squad |
+| Fitness & Rotation | `pages/05_fitness.py` | Injury risk + rotation view |
+| Tactical Board | `pages/06_tactical_board.py` | Premium HTML/CSS lineup view (formation/tactical layout) |
+| Public Sentiment | `pages/07_sentiment.py` | SentimentScore breakdown |
+| Competition Context | `pages/08_competition.py` | Opponent/group analysis |
+| Historical Trend View | `pages/09_trend_history.py` | DSSScore trend across successive Gold runs — **missing from earlier drafts of this table, added back here** |
 | Set Piece & Clutch | `pages/10_setpiece_clutch.py` | Set-piece and pressure performance |
 | Squad Builder | `pages/11_squad_builder.py` | Interactive manual squad construction |
 
@@ -255,18 +255,24 @@ football_atlas/
 │                                    #   see `make test` / `docs/architecture.md`. CHANGELOG.md's
 │                                    #   last full run: 400 passed / 9 known-failing as of 2026-08-02;
 │                                    #   re-verify with `pytest tests/ -q` before quoting a number)
-├── config.py                       # All weights, normalization bounds, thresholds — single source of truth
-├── run_bronze.py                   # Bronze orchestrator (11 in-script sources)
-├── run_sd_extractor.py             # Standalone — SofaScore detail column extraction
-├── run_fotmob.py                   # Standalone — Fotmob loader
-├── run_sofifa.py                   # Standalone — SoFIFA loader
-├── run_silver.py                   # Silver pipeline
-├── run_gold.py                     # Gold pipeline (scoring + ranking + Player DNA)
-├── run_player_dna.py               # Player DNA clustering (standalone re-run)
-├── run_injury_predictor.py         # Injury Risk Index
-├── run_selection_audit.py          # Selection Audit vs. real squad
-├── run_rotation_strategy.py        # Rotation Strategy
-├── Makefile                        # See `make help` — kept in sync with the scripts above
+├── config/
+│   └── scoring_config.py           # All weights, normalization bounds, thresholds — single source of truth
+├── pipelines/                      # All orchestration entrypoints, grouped by layer
+│   ├── bronze/
+│   │   ├── run_bronze.py           # Bronze orchestrator (11 in-script sources)
+│   │   ├── run_sd_extractor.py     # Standalone — SofaScore detail column extraction
+│   │   ├── run_fotmob.py           # Standalone — Fotmob loader
+│   │   └── run_sofifa.py           # Standalone — SoFIFA loader
+│   ├── silver/
+│   │   └── run_silver.py           # Silver pipeline
+│   ├── gold/
+│   │   └── run_gold.py             # Gold pipeline (scoring + ranking + Player DNA)
+│   └── ml/
+│       ├── run_player_dna.py       # Player DNA clustering (standalone re-run)
+│       ├── run_injury_predictor.py # Injury Risk Index
+│       ├── run_selection_audit.py  # Selection Audit vs. real squad
+│       └── run_rotation_strategy.py # Rotation Strategy
+├── Makefile                        # See `make help` — kept in sync with the scripts above (invokes them as `python -m pipelines.<layer>.<script>`)
 ├── docker-compose.yml              # Local MinIO simulator
 ├── requirements.txt
 └── .env                            # MinIO + API_FOOTBALL_KEY — already present; rotate keys before making this repo public
@@ -360,7 +366,7 @@ make test        # pytest tests/ -q — full suite
   required.
 - `SentimentScore`'s collector + NLP pipeline is untested end-to-end against
   live services.
-- `--use-clubelo` in `run_gold.py` has untested live-fetch behavior from
+- `--use-clubelo` in `pipelines/gold/run_gold.py` has untested live-fetch behavior from
   network-restricted environments; its parsing/matching/scoring logic is
   unit-tested, the live call is not.
 - Several scoring cutoffs (injury risk levels, clutch/pressure thresholds)

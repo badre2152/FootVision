@@ -14,10 +14,10 @@ explanation; this file is the command sequence only.
 
 ## 0. The one thing to know before running anything
 
-Every live-path run (`run_bronze.py`, `run_sd_extractor.py`,
-`run_fotmob.py`, `run_sofifa.py`, `run_gold.py`) is dated against
+Every live-path run (`pipelines/bronze/run_bronze.py`, `pipelines/bronze/run_sd_extractor.py`,
+`pipelines/bronze/run_fotmob.py`, `pipelines/bronze/run_sofifa.py`, `pipelines/gold/run_gold.py`) is dated against
 `config.DECISION_DATE` (`2026-05-25`) unless you pass `--as-of
-YYYY-MM-DD` explicitly. `run_injury_predictor.py` uses `--reference-date`
+YYYY-MM-DD` explicitly. `pipelines/ml/run_injury_predictor.py` uses `--reference-date`
 instead. **Do not change `DECISION_DATE` to anything on/after
 2026-05-26** (the real WC2026 squad announcement) — see `README.md`'s
 top section for why. If you only remember one thing from this file, make
@@ -40,7 +40,7 @@ Rotate `API_FOOTBALL_KEY` before making this repo public.
 ## 2. Bronze
 
 ```bash
-make bronze              # 11 in-script sources (run_bronze.py)
+make bronze              # 11 in-script sources (pipelines/bronze/run_bronze.py)
 make bronze-sd-extractor # REQUIRED before silver — extracts sd_* columns; run FIRST
 make bronze-fotmob       # standalone — run AFTER bronze-sd-extractor
 make bronze-sofifa       # standalone, Playwright — needs: playwright install chromium
@@ -54,9 +54,9 @@ each default to `config.DECISION_DATE` internally; pass `--as-of` directly
 to the underlying script if you need a different date for a one-off run:
 
 ```bash
-python run_sd_extractor.py --as-of 2026-05-25
-python run_fotmob.py --as-of 2026-05-25
-python run_sofifa.py --as-of 2026-05-25
+python -m pipelines.bronze.run_sd_extractor --as-of 2026-05-25
+python -m pipelines.bronze.run_fotmob --as-of 2026-05-25
+python -m pipelines.bronze.run_sofifa --as-of 2026-05-25
 ```
 
 ### Running a single source only (faster iteration)
@@ -66,8 +66,8 @@ make bronze-fast   # skips Understat + SofaScore + StatsBomb + Wikidata
 make bronze-test   # 3 players, filesystem mock, fail-fast
 ```
 
-Or call `run_bronze.py` directly with any combination of `--skip-*` flags
-(`python run_bronze.py --help` for the full, current list — the flags
+Or call `pipelines/bronze/run_bronze.py` directly with any combination of `--skip-*` flags
+(`python -m pipelines.bronze.run_bronze --help` for the full, current list — the flags
 themselves are the source of truth, not this file).
 
 ---
@@ -85,10 +85,10 @@ Watch the coverage report and any `WARNING` lines at the end.
 ## 4. Gold — scoring (9 components)
 
 ```bash
-make gold   # python run_gold.py --top-n 26
+make gold   # python -m pipelines.gold.run_gold --top-n 26
 ```
 
-`run_gold.py` rebuilds its own Silver internally from whatever's currently
+`pipelines/gold/run_gold.py` rebuilds its own Silver internally from whatever's currently
 in MinIO Bronze — it does not require a prior local `make silver` run,
 though results should match if Bronze hasn't changed between the two.
 Optional: `--use-clubelo` to replace the hardcoded league-difficulty table

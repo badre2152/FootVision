@@ -19,7 +19,7 @@ from dashboard.data_loader import load_latest_players_scored
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
 from dashboard.auth import require_auth
 from dashboard.report_utils import csv_download_button
-from analytics.set_piece_analyzer import clutch_ranking
+from analytics.performance.set_piece_analyzer import clutch_ranking
 
 st.set_page_config(page_title="Football Atlas — Set Piece & Clutch", page_icon="🎯", layout="wide")
 require_auth()  # spec #6 — must run before render_sidebar()/any data load below

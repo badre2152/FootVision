@@ -1,5 +1,5 @@
 # ingestion/loaders/club_stats_csv_loader.py
-# Source: Local FBref-style club stats CSV (players_data-2025_2026.csv)
+# Source: Local FBref-style club stats CSV (data/raw/players_data-2025_2026.csv)
 #
 # WHY THIS LOADER EXISTS:
 #   fbref_loader.py and fbref_advanced_loader.py are both blocked by FBref's
@@ -51,7 +51,7 @@ from ingestion.loaders._bronze_utils import validate_seed_columns, assert_min_co
 logger = logging.getLogger(__name__)
 
 BUCKET   = "football-bronze"
-CSV_PATH = "players_data-2025_2026.csv"
+CSV_PATH = "data/raw/players_data-2025_2026.csv"
 
 # Columns this loader can honestly fill from the CSV (FBref "standard" table
 # only - no xG/npxG/xA/press/prog, see module docstring).
@@ -128,7 +128,7 @@ def load_club_stats_csv_bronze(
 ) -> str:
     """
     Fills club-performance counting stats (Gls, Ast, Min, Sh, SoT, CrdY,
-    CrdR + per-90 rates) for players found in players_data-2025_2026.csv
+    CrdR + per-90 rates) for players found in data/raw/players_data-2025_2026.csv
     (Big-5 European leagues, 2025-26 season).
 
     Does NOT fill xG, npxG, xA, press_per90, or prog_passes - those columns
