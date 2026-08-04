@@ -314,17 +314,21 @@ def _apply_final_scoring(df: pd.DataFrame) -> pd.DataFrame:
     injured/inactive player like Imran Louza topping the ranking on the
     strength of historical stats alone) is applied to the real freshly-
     computed DSSScore. Reordering these two calls silently reintroduces
-    BUG-01 — no exception is raised, the gate's effect just vanishes, so
+    BUG-01 — no exception used to be raised, the gate's effect just
+    vanished. This is now enforced structurally, not just by this comment:
+    the calls below go through StageGuard (pipelines/_stage_guard.py),
+    which raises AssertionError immediately if dss_gate is ever reached
+    before final_score has actually run — see that module's docstring.
     tests/pipelines/test_gold2_components.py's TestMinutesFilterWeightBinding
-    class asserts on the actual numeric effect, not just that the functions
-    were called. Keeping both calls inside this one function (in this fixed
-    order) is what used to be enforced only by a comment two functions apart
-    inside main() — see the pipeline-ordering guard in C3 for the next step
-    beyond even this.
+    class additionally asserts on the actual numeric effect, not just that
+    the functions were called.
     """
+    from pipelines._stage_guard import StageGuard
+    guard = StageGuard()
+
     logger.info("Step 3.5/5 — Applying minutes filter (current season activity)...")
     from analytics.scoring.minutes_filter import apply_minutes_filter as _mf
-    df = _mf(df)
+    df = guard.run("minutes_filter", _mf, df)
     inactive = df[df.get("minutes_flag", pd.Series("ACTIVE", index=df.index)).isin(["INACTIVE", "SEED_INACTIVE"])]
     if not inactive.empty:
         logger.warning(
@@ -333,10 +337,10 @@ def _apply_final_scoring(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     logger.info("Step 4/5 — Computing final DSSScore and ranking...")
-    df = compute_final_score(df)
+    df = guard.run("final_score", compute_final_score, df, depends_on=("minutes_filter",))
 
     from analytics.scoring.minutes_filter import apply_dss_gate
-    df = apply_dss_gate(df)
+    df = guard.run("dss_gate", apply_dss_gate, df, depends_on=("final_score",))
 
     # WIRED IN 2026-07-14: was a fully-built, never-called module
     # (analytics/scoring/percentile_score.py — confirmed zero call sites
@@ -344,7 +348,7 @@ def _apply_final_scoring(df: pd.DataFrame) -> pd.DataFrame:
     # dashboard/report DISPLAY only — never changes Rank or squad
     # selection (the module self-verifies this with a rank-mismatch check
     # logged as an error if it ever occurs).
-    df = apply_percentile_scoring(df)
+    df = guard.run("percentile_score", apply_percentile_scoring, df, depends_on=("dss_gate",))
     return df
 
 
