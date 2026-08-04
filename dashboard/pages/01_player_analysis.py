@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dashboard.data_loader import load_latest_players_scored, available_component_columns
 from dashboard.sidebar import render_sidebar, apply_sidebar_filters
 from dashboard.auth import require_auth
-from dashboard.notes_store import get_note, save_note
+from dashboard.notes_store import get_note, save_note, NoteConflictError
 from dashboard.report_utils import csv_download_button, build_player_profile_pdf
 from analytics.scouting.rival_benchmark import compare_to_reference  # #23
 
@@ -208,8 +208,28 @@ with note_area_col:
     )
 
 if st.button("💾 Save note", key=f"coach_note_save_{selected_id}"):
-    existing_note = save_note(row["player_id"], note_text, author=author_input or None)
-    st.success("Note saved.")
+    # C1 fix: pass the version this page actually loaded (0 if no note
+    # existed yet) so a save that would silently clobber someone else's
+    # more recent edit is caught instead of just overwriting it.
+    loaded_version = existing_note["version"] if existing_note else 0
+    try:
+        existing_note = save_note(
+            row["player_id"], note_text, author=author_input or None,
+            expected_version=loaded_version,
+        )
+        st.success("Note saved.")
+    except NoteConflictError as e:
+        st.error(
+            f"⚠️ Someone else saved a note for {row['player_name']} while you were "
+            f"editing — your version was **not** saved, to avoid silently "
+            f"overwriting theirs."
+        )
+        st.info(
+            f"Their note (by **{e.current['author']}** at {e.current['updated_at']} UTC):\n\n"
+            f"> {e.current['text'] or '*(empty)*'}"
+        )
+        st.caption("Copy anything you still need from your draft above, then save again to overwrite intentionally.")
+        existing_note = e.current
 
 if existing_note and existing_note.get("text"):
     st.caption(f"🕒 Last edited by **{existing_note['author']}** at {existing_note['updated_at']} UTC")

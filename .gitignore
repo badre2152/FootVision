@@ -36,6 +36,16 @@ logs/*.log
 
 *.csv.bak
 
+# Coach Notes SQLite store (C1 concurrency fix) — regenerated automatically
+# from the tracked data/coach_notes.json seed via one-time migration on
+# first run (see dashboard/notes_store.py). The legacy .json IS tracked
+# (kept as the durable, git-diffable backup); the live .db is not, same
+# reasoning as Bronze/Silver/Gold: don't commit a binary file that
+# changes on every write when it's regenerable.
+data/coach_notes.db
+data/coach_notes.db-wal
+data/coach_notes.db-shm
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
