@@ -49,6 +49,19 @@ from analytics.scoring.sentiment_score import compute_sentiment_score      # NEW
 from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary  # WIRED IN 2026-07-14 (was orphaned)
 from analytics.ml.player_clustering import cluster_players  # NEW 2026-07-29 — ML layer, see module docstring
 
+# C2 reorg note: select_squad_with_position_cap() and build_squad_summary()
+# used to be defined right here in this script (~270 lines of squad-selection
+# domain logic living inside an entrypoint). They now live in
+# analytics/squad/squad_selection.py — this import re-exports them so
+# `run_gold.select_squad_with_position_cap` / `run_gold.build_squad_summary`
+# still resolve for existing callers (including tests/pipelines/*.py, which
+# import this module directly to reach them) without any change on their end.
+from analytics.squad.squad_selection import (  # noqa: F401
+    select_squad_with_position_cap,
+    build_squad_summary,
+    DEFAULT_POSITION_CAPS,
+)
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # TOP_EXPORT_COLS / build_top_cols() — regression fix (03_regression_protection.md)
@@ -195,289 +208,6 @@ def parse_args() -> argparse.Namespace:
 
 
 
-def select_squad_with_position_cap(
-    df: pd.DataFrame,
-    top_n: int = 26,
-    position_caps: dict | None = None,
-    use_flexibility_tiebreak: bool = True,
-    flex_tiebreak_threshold: float = 0.01,
-    depth_chart_surplus_threshold: int = 3,
-) -> pd.DataFrame:
-    """
-    Selects top-N players with realistic position caps.
-
-    A pure score-based ranking produces 6 GKs in top-26 (since Morocco has 6 GK
-    candidates and the scoring system ranks GKs on a different scale). Real squads
-    have position constraints: 3 GK, ~9 DEF, ~9 MID, ~5 FWD.
-
-    Default caps (FIFA World Cup squad of 26):
-        GK  = 3  (minimum: need 3 to cover all scenarios)
-        DEF = 9  (maximum: 4-5 starters + 4-5 backups)
-        MID = 9  (maximum)
-        FWD = 5  (minimum: 3 starters + 2 backups)
-
-    Algorithm: greedy, per position group — take the top `caps[pos]` players of
-    each group by DSSScore (equivalent to the old single-pass-by-global-Rank
-    walk, since Rank is itself a DSSScore-descending rank — see
-    analytics/scoring/performance_score.py). After all groups are filled:
-    fill remaining slots from the best leftover players regardless of position.
-
-    NEW 2026-08-01 (spec #13, 13_flexibility_in_selection_logic.md):
-    -------------------------------------------------------------------------
-    Before this, `FlexibilityScore` / `tm_secondary_positions` only nudged
-    DSSScore slightly — they had ZERO effect on which players actually filled
-    the position-capped squad, which is exactly where real positional
-    flexibility matters (covering an injury/suspension without burning a
-    full extra roster slot).
-
-    When `use_flexibility_tiebreak=True` (default), for each position group's
-    LAST cap slot, if the incumbent (last player who'd normally make the cut)
-    and one or more challengers (best players just outside the cap) are within
-    `flex_tiebreak_threshold` DSSScore of each other, a challenger is preferred
-    over the incumbent IF the challenger — and not the incumbent — has
-    documented secondary-position coverage (`tm_secondary_positions`, mapped
-    via analytics.scoring.flexibility_score.secondary_position_groups()) for
-    another position group that is "understaffed relative to its depth
-    chart".
-
-    "Understaffed relative to depth chart" here means: that position group
-    has `depth_chart_surplus_threshold` or fewer spare candidates above its
-    hard cap in the full candidate pool (e.g. MID with 11 total candidates
-    for a cap of 9 has a surplus of only 2 — thin bench cushion vs. FWD's
-    16-for-5). This repo does not yet implement spec #10's fuller per-
-    position depth chart, so this candidate-pool surplus is the closest
-    available proxy; if/when spec #10 lands, this should read its actual
-    depth-chart output instead (see that spec).
-
-    This NEVER changes the hard per-position totals (`caps` stay exact) — it
-    only changes WHICH player occupies a borderline slot, and only when it
-    would actually change the outcome. Every swap is logged via `logger.info`
-    and recorded in the returned `selection_reason` column (empty string for
-    everyone else) so it's visible in `top26.csv` and `4_final_squad.py`, not
-    a silent internal tiebreak.
-
-    Args:
-        df:                              Full ranked DataFrame (must have Rank
-                                          + position cols; tm_secondary_positions
-                                          optional — treated as "no flexibility"
-                                          if missing).
-        top_n:                           Target squad size (default 26).
-        position_caps:                   Override default caps per position.
-        use_flexibility_tiebreak:        Set False to fall back to pure
-                                          DSSScore order (old behavior).
-        flex_tiebreak_threshold:         Max DSSScore gap to count as a "close
-                                          enough" tie (default 0.01 — see spec
-                                          #13's Implementation Plan #1; this is
-                                          a product decision, tune as needed).
-        depth_chart_surplus_threshold:   Candidate-pool surplus at/below which
-                                          a position group counts as thin
-                                          (default 3).
-
-    Returns:
-        DataFrame of top_n selected players, sorted by DSSScore, with an
-        added `selection_reason` column (non-empty only for flexibility-tiebreak
-        swaps).
-    """
-    caps = position_caps or {"GK": 3, "DEF": 9, "MID": 9, "FWD": 5}
-
-    # ── Determine which position groups are "understaffed relative to depth
-    #    chart" — see docstring above for what that means in this codebase. ──
-    understaffed_positions = set()
-    if use_flexibility_tiebreak:
-        candidate_counts = df["position"].value_counts().to_dict()
-        for pos, cap in caps.items():
-            surplus = candidate_counts.get(pos, 0) - cap
-            if surplus <= depth_chart_surplus_threshold:
-                understaffed_positions.add(pos)
-        if understaffed_positions:
-            logger.info(
-                "Flexibility tiebreak ENABLED — position groups with thin "
-                "depth-chart surplus (<=%d spare candidates above cap): %s",
-                depth_chart_surplus_threshold, sorted(understaffed_positions),
-            )
-
-    selected_parts = []
-    remaining_parts = []
-    selection_reasons: dict = {}   # player_id -> human-readable reason string
-
-    for pos, cap in caps.items():
-        pos_df = df[df["position"] == pos].sort_values("DSSScore", ascending=False)
-        pos_selected = pos_df.iloc[:cap].copy()
-        pos_overflow = pos_df.iloc[cap:].copy()
-
-        # Tiebreak only makes sense if the group is actually at its cap (i.e.
-        # there IS a "last slot" being contested) and there's at least one
-        # challenger just outside it.
-        if use_flexibility_tiebreak and len(pos_selected) == cap and cap > 0 and not pos_overflow.empty:
-            incumbent_row = pos_selected.iloc[[-1]]
-            incumbent = incumbent_row.iloc[0]
-
-            # Near-tie band: every overflow candidate within threshold of the
-            # incumbent's DSSScore (covers "last slot(s)", plural, per spec).
-            tie_band = pos_overflow[
-                (incumbent["DSSScore"] - pos_overflow["DSSScore"]) <= flex_tiebreak_threshold
-            ]
-
-            incumbent_flex = secondary_position_groups(
-                incumbent.get("tm_secondary_positions")
-            ) & understaffed_positions - {pos}
-
-            flexible_challengers = []
-            for idx, cand in tie_band.iterrows():
-                cand_flex = secondary_position_groups(
-                    cand.get("tm_secondary_positions")
-                ) & understaffed_positions - {pos}
-                if cand_flex:
-                    flexible_challengers.append((idx, cand, cand_flex))
-
-            # Only swap if the incumbent has NO qualifying flexibility of its
-            # own — otherwise there's nothing to gain by swapping.
-            if flexible_challengers and not incumbent_flex:
-                # Prefer the highest-DSSScore flexible challenger among ties.
-                best_idx, challenger, challenger_flex = max(
-                    flexible_challengers, key=lambda t: t[1]["DSSScore"]
-                )
-                score_gap = incumbent["DSSScore"] - challenger["DSSScore"]
-                reason = (
-                    f"Selected over {incumbent['player_name']} for the last "
-                    f"{pos} slot (DSSScore gap {score_gap:.4f} <= "
-                    f"{flex_tiebreak_threshold}) — covers "
-                    f"{'/'.join(sorted(challenger_flex))} as secondary "
-                    f"position(s), which {'is' if len(challenger_flex) == 1 else 'are'} "
-                    f"thin on depth-chart surplus (<= {depth_chart_surplus_threshold} "
-                    f"spare candidates above cap)."
-                )
-                logger.info("Flexibility tiebreak: %s", reason)
-                if "player_id" in challenger:
-                    selection_reasons[challenger["player_id"]] = reason
-
-                challenger_row = pos_overflow.loc[[best_idx]]
-                pos_selected = pd.concat([pos_selected.iloc[:-1], challenger_row])
-                pos_overflow = pd.concat(
-                    [incumbent_row, pos_overflow.drop(index=best_idx)]
-                )
-
-        selected_parts.append(pos_selected)
-        remaining_parts.append(pos_overflow)
-
-    selected_df = (
-        pd.concat(selected_parts, ignore_index=False) if selected_parts else df.iloc[0:0]
-    )
-    remaining_df = (
-        pd.concat(remaining_parts, ignore_index=False) if remaining_parts else df.iloc[0:0]
-    )
-
-    # Fill remaining slots from best remaining players, regardless of position
-    # (unchanged from the old behavior — remaining_df re-sorted by DSSScore
-    # since it's now assembled per-position-group rather than in one global pass).
-    slots_left = top_n - len(selected_df)
-    if slots_left > 0 and not remaining_df.empty:
-        remaining_df = remaining_df.sort_values("DSSScore", ascending=False)
-        selected_df = pd.concat([selected_df, remaining_df.iloc[:slots_left]])
-
-    squad_df = selected_df.sort_values("DSSScore", ascending=False).reset_index(drop=True)
-    squad_df.insert(0, "SquadRank", range(1, len(squad_df) + 1))
-
-    if "player_id" in squad_df.columns:
-        squad_df["selection_reason"] = squad_df["player_id"].map(selection_reasons).fillna("")
-    else:
-        squad_df["selection_reason"] = ""
-
-    return squad_df
-
-
-def build_squad_summary(squad_df: pd.DataFrame, all_df: pd.DataFrame, top_n: int) -> dict:
-    """
-    Builds a JSON-serialisable squad summary for the coach.
-    Includes position breakdown, injury flags, and coverage stats.
-
-    FIX (regression of AUDIT_AND_FIXES.md Fix 2, June 29 2026):
-    This function MUST receive the position-capped squad (`squad_df`, the
-    output of select_squad_with_position_cap()) for position_breakdown —
-    NOT the full 49-player df filtered by raw Rank <= top_n. Raw Rank
-    ignores position caps (e.g. 5-6 GKs legitimately rank inside the top 26
-    on pure DSSScore), which previously produced an impossible squad
-    (GK=5/6) in this JSON while top26.csv showed the correct capped
-    composition (GK=3). Verified live on the 2026-07-13 run before this fix.
-
-    `all_df` (the full 49-candidate table) is only used for total_candidates
-    and the global score_range — never for position_breakdown.
-    """
-    from config import DECISION_DATE
-
-    # Position breakdown — from the CAPPED squad, not raw Rank
-    position_counts = squad_df.groupby("position")["player_name"].apply(list).to_dict()
-    position_size = {pos: len(names) for pos, names in position_counts.items()}
-
-    # Injury risk flags — within the actual squad
-    high_risk = squad_df[
-        squad_df.get("inj_days_missed_2y", pd.Series(dtype=float)).fillna(0) > 90
-    ]["player_name"].tolist() if "inj_days_missed_2y" in squad_df.columns else []
-
-    # Low fbref coverage — within the actual squad
-    no_fbref = squad_df[
-        squad_df.get("fbref_id", pd.Series(dtype=str)).isna()
-    ]["player_name"].tolist() if "fbref_id" in squad_df.columns else []
-
-    # intl_caps data-quality flag (only if Silver produced it — see AUDIT Fix 3)
-    caps_missing = []
-    if "intl_caps_data_missing" in squad_df.columns:
-        caps_missing = squad_df[
-            squad_df["intl_caps_data_missing"].fillna(False)
-        ]["player_name"].tolist()
-
-    top_row = squad_df.loc[squad_df["DSSScore"].idxmax()]
-
-    # NEW 2026-08-01 (spec #13) — surface any flexibility-tiebreak swaps
-    # explicitly in the summary, so they're visible to the coach, not just a
-    # silent internal tiebreak buried in a per-player column.
-    flexibility_tiebreaks = []
-    if "selection_reason" in squad_df.columns:
-        flagged = squad_df[squad_df["selection_reason"].fillna("") != ""]
-        flexibility_tiebreaks = [
-            {"player_name": row["player_name"], "position": row.get("position", ""),
-             "reason": row["selection_reason"]}
-            for _, row in flagged.iterrows()
-        ]
-
-    return {
-        "generated_at":       datetime.now().isoformat(),
-        # #24 / #18 forward-compat stamp (01_temporal_cutoff.md is now
-        # implemented — see config.py § 0). Lets dashboard/data_loader.py's
-        # load_all_players_scored_history() (spec #18) tell a genuinely
-        # cutoff-enforced run apart from an old pre-fix one, instead of
-        # conservatively treating every snapshot as pre-fix forever.
-        # `decision_date_enforced` is a claim about THIS CODE VERSION, not a
-        # per-record guarantee — see config.py's own caveats about live
-        # sources (e.g. NewsAPI's free-tier ~30-day window) that can't
-        # always honor an arbitrary as_of even when the code asks them to.
-        "decision_date_enforced": True,
-        "decision_date":       DECISION_DATE.isoformat(),
-        "total_candidates":   len(all_df),
-        "squad_size":         len(squad_df),          # actual selected count, not just target
-        "squad_size_target":  top_n,
-        "position_breakdown": position_counts,
-        "position_counts":    position_size,          # e.g. {"GK": 3, "DEF": 9, "MID": 9, "FWD": 5}
-        "flexibility_tiebreaks": flexibility_tiebreaks,  # NEW 2026-08-01 (spec #13)
-        "flags": {
-            "high_injury_risk":           high_risk,
-            "limited_data":               no_fbref,
-            "intl_caps_possibly_missing":  caps_missing,
-        },
-        "score_range": {
-            "min":  float(all_df["DSSScore"].min()),
-            "max":  float(all_df["DSSScore"].max()),
-            "mean": float(all_df["DSSScore"].mean()),
-        },
-        "top_player": {
-            "name":  top_row.get("player_name", "unknown"),
-            "score": float(top_row["DSSScore"]),
-            "club":  top_row.get("club", "unknown"),
-        },
-    }
-
-
-
 def upload_gold_to_minio(local_path: Path, object_name: str) -> None:
     """Uploads a single Gold output file to the football-gold MinIO bucket."""
     if os.getenv("MINIO_MOCK", "0") == "1":
@@ -505,6 +235,259 @@ def ensure_minio_buckets() -> None:
     except Exception as e:
         logging.getLogger("run_gold").warning("Could not verify MinIO buckets: %s", e)
 
+# ══════════════════════════════════════════════════════════════════════════
+# main() decomposition (C4 in the architecture review)
+# ══════════════════════════════════════════════════════════════════════════
+# main() used to be a single ~220-line function doing orchestration + data
+# enrichment + ML fallback handling + file I/O + validation + console
+# reporting all in one place — impossible to unit-test any one piece without
+# running the whole pipeline. Split into the stage functions below; main()
+# itself is now purely sequencing them. Every log message, exception-handling
+# path, and computation is copied verbatim — only the function boundaries are
+# new, nothing about what runs or in what order has changed.
+
+
+def _enrich_with_clubelo(df: pd.DataFrame, args: argparse.Namespace) -> None:
+    """
+    Step 2.5/5 (optional, --use-clubelo only). Patches the module-level
+    LEAGUE_DIFFICULTY table in analytics/scoring/league_quality.py in place
+    for this run — does not modify or return `df` itself. A fetch/patch
+    failure must never block a real squad-selection run, so this always
+    falls back to the hardcoded table on any error.
+    """
+    if not args.use_clubelo:
+        return
+
+    logger.info("Step 2.5/5 — Fetching real ClubElo ratings (--use-clubelo)...")
+    try:
+        from ingestion.loaders.clubelo_loader import load_clubelo_bronze, patch_league_quality
+        clubelo_result = load_clubelo_bronze(seed_df=df)
+        if clubelo_result.get("difficulty_by_league"):
+            patch_league_quality(clubelo_result, seed_df=df)
+            logger.info(
+                "ClubElo: patched %d leagues with real Elo-based difficulty factors "
+                "(replacing the hardcoded table for this run only — league_quality.py "
+                "itself is unchanged on disk).",
+                len(clubelo_result["difficulty_by_league"]),
+            )
+        else:
+            logger.warning(
+                "ClubElo: fetch returned no usable data — falling back to the "
+                "hardcoded LEAGUE_DIFFICULTY table (league_quality.py). This is "
+                "the expected safe behavior on network failure, not a crash."
+            )
+    except Exception as e:
+        logger.warning(
+            "ClubElo fetch/patch failed (%s) — falling back to the hardcoded "
+            "LEAGUE_DIFFICULTY table. This --use-clubelo path has not been "
+            "tested end-to-end against the live API from every environment; "
+            "if this keeps failing, run "
+            "`python -c \"from ingestion.loaders.clubelo_loader import load_clubelo_bronze; "
+            "print(load_clubelo_bronze())\"` directly to see the raw error.",
+            e,
+        )
+
+
+def _compute_all_subscores(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
+    """Step 3/5 — the full sub-score chain (Performance, Form, Mental, ...)."""
+    df = compute_performance_score(df)
+    df = compute_form_score(df)          # CONFLICT-01 FIX: uses form_final + rating_final
+    df = compute_mental_score(df)        # CONFLICT-03 FIX: StatsBomb proxy
+    df = compute_availability_score(df)
+    df = compute_international_score(df)
+    df = compute_chemistry_score(df)     # NEW 2026-07-14 — pairwise StatsBomb pass network
+    df = compute_pressure_index(df)      # NEW 2026-07-14 — StatsBomb intl xG vs club xG delta
+    df = compute_flexibility_score(df)   # NEW 2026-07-14 — UNTESTED upstream, see module docstring
+    df = compute_sentiment_score(df, use_nlp=not args.no_sentiment_nlp)  # NEW 2026-07-22
+    return df
+
+
+def _apply_final_scoring(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Step 4/5 — minutes filter, final DSSScore + rank, the post-scoring DSS
+    gate, and percentile scoring.
+
+    BUG-01 FIX (03_regression_protection.md / analytics/scoring/minutes_filter.py):
+    apply_dss_gate() MUST run AFTER compute_final_score(), never before.
+    apply_minutes_filter() only classifies activity + penalizes
+    AvailabilityScore; the actual DSSScore-level gate (the one that stops an
+    injured/inactive player like Imran Louza topping the ranking on the
+    strength of historical stats alone) is applied to the real freshly-
+    computed DSSScore. Reordering these two calls silently reintroduces
+    BUG-01 — no exception is raised, the gate's effect just vanishes, so
+    tests/pipelines/test_gold2_components.py's TestMinutesFilterWeightBinding
+    class asserts on the actual numeric effect, not just that the functions
+    were called. Keeping both calls inside this one function (in this fixed
+    order) is what used to be enforced only by a comment two functions apart
+    inside main() — see the pipeline-ordering guard in C3 for the next step
+    beyond even this.
+    """
+    logger.info("Step 3.5/5 — Applying minutes filter (current season activity)...")
+    from analytics.scoring.minutes_filter import apply_minutes_filter as _mf
+    df = _mf(df)
+    inactive = df[df.get("minutes_flag", pd.Series("ACTIVE", index=df.index)).isin(["INACTIVE", "SEED_INACTIVE"])]
+    if not inactive.empty:
+        logger.warning(
+            "INACTIVE/SEED_INACTIVE players (AvailabilityScore penalised, DSSScore gate applied after scoring): %s",
+            ", ".join(inactive["player_name"].tolist())
+        )
+
+    logger.info("Step 4/5 — Computing final DSSScore and ranking...")
+    df = compute_final_score(df)
+
+    from analytics.scoring.minutes_filter import apply_dss_gate
+    df = apply_dss_gate(df)
+
+    # WIRED IN 2026-07-14: was a fully-built, never-called module
+    # (analytics/scoring/percentile_score.py — confirmed zero call sites
+    # anywhere in the codebase before this). Adds DSSScore_pct for
+    # dashboard/report DISPLAY only — never changes Rank or squad
+    # selection (the module self-verifies this with a rank-mismatch check
+    # logged as an error if it ever occurs).
+    df = apply_percentile_scoring(df)
+    return df
+
+
+def _run_player_dna(df: pd.DataFrame, args: argparse.Namespace) -> tuple[pd.DataFrame, dict, int | None]:
+    """
+    Step 5/6 — Player DNA (K-Means, ML layer). Descriptive/exploratory
+    play-style tag, NOT a selection input — see
+    analytics/ml/player_clustering.py module docstring for the full
+    rationale. Wrapped in try/except: a clustering failure must never block
+    a real squad-selection run, same pattern as --use-clubelo.
+
+    Returns (df, dna_archetype_map, dna_k).
+    """
+    if args.no_player_dna:
+        logger.info("Step 5/6 — Player DNA clustering SKIPPED (--no-player-dna).")
+        df["PlayerDNA"] = "N/A"
+        df["player_dna_cluster"] = pd.NA
+        df["dna_imputed_features_count"] = pd.NA
+        return df, {}, None
+
+    logger.info("Step 5/6 — Player DNA clustering (K-Means)...")
+    try:
+        dna_result = cluster_players(df, k=args.player_dna_k)
+        df = dna_result.df
+        dna_archetype_map = dna_result.archetype_map
+        dna_k = dna_result.k
+        if dna_result.silhouette_table:
+            best_sil = dna_result.silhouette_table[dna_result.k]
+            sil_str = ", ".join(f"k={k}:{v:.3f}" for k, v in sorted(dna_result.silhouette_table.items()))
+            logger.info("Player DNA: k=%d chosen (silhouette=%.3f). All k tried: %s",
+                         dna_result.k, best_sil, sil_str)
+            if best_sil < 0.30:
+                logger.warning(
+                    "Player DNA silhouette=%.3f (k=%d) is below the ~0.3-0.5 "
+                    "range usually considered real cluster structure — expected "
+                    "with continuous per-90 stats and %d outfield players. "
+                    "Treat PlayerDNA as a descriptive dashboard tag, NOT a "
+                    "selection input. See analytics/ml/player_clustering.py.",
+                    best_sil, dna_result.k, dna_result.n_outfield,
+                )
+        logger.info("Player DNA archetype counts:\n%s",
+                     df["PlayerDNA"].value_counts().to_string())
+        return df, dna_archetype_map, dna_k
+    except Exception as e:
+        logger.error(
+            "Player DNA clustering FAILED (%s) — falling back to 'N/A' for "
+            "everyone. Rest of the pipeline (scoring, squad selection) is "
+            "unaffected, since PlayerDNA is not a scoring input.", e,
+        )
+        df["PlayerDNA"] = "N/A"
+        df["player_dna_cluster"] = pd.NA
+        df["dna_imputed_features_count"] = pd.NA
+        return df, {}, None
+
+
+def _export_full_table(df: pd.DataFrame, output_dir: Path, run_date: str) -> Path:
+    """Exports the full scored table (all candidates) and uploads it to Gold."""
+    full_path = output_dir / f"players_scored_{run_date}.csv"
+    df.to_csv(full_path, index=False)
+    logger.info("Full table: %s", full_path)
+    upload_gold_to_minio(full_path, full_path.name)
+    return full_path
+
+
+def _select_and_export_squad(
+    df: pd.DataFrame, args: argparse.Namespace, output_dir: Path, run_date: str,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Runs position-capped squad selection and exports top-N.csv. Returns (squad_df, top_cols)."""
+    squad_df = select_squad_with_position_cap(
+        df,
+        top_n=args.top_n,
+        use_flexibility_tiebreak=not args.no_flexibility_tiebreak,
+        flex_tiebreak_threshold=args.flex_tiebreak_threshold,
+        depth_chart_surplus_threshold=args.depth_chart_surplus_threshold,
+    )
+    top_cols = build_top_cols(squad_df.columns)
+    top_path = output_dir / f"top{args.top_n}_{run_date}.csv"
+    squad_df[top_cols].to_csv(top_path, index=False)
+    logger.info("Top-%d recommendation: %s", args.top_n, top_path)
+    upload_gold_to_minio(top_path, top_path.name)
+    return squad_df, top_cols
+
+
+def _build_and_export_summary(
+    squad_df: pd.DataFrame, df: pd.DataFrame, args: argparse.Namespace,
+    output_dir: Path, run_date: str, dna_archetype_map: dict, dna_k: int | None,
+) -> dict:
+    """Builds squad_summary.json (position breakdown, flags, Player DNA breakdown) and exports it."""
+    summary = build_squad_summary(squad_df, df, args.top_n)
+    summary["percentile_summary"] = score_summary(df, top_n=args.top_n)  # WIRED IN 2026-07-14
+    # NEW 2026-07-29 — Player DNA breakdown WITHIN the selected squad only.
+    # Descriptive only: never used by select_squad_with_position_cap(),
+    # squad selection already happened by the time this runs.
+    summary["player_dna"] = {
+        "k_chosen": dna_k,
+        "archetype_map": dna_archetype_map,
+        "squad_archetype_counts": (
+            squad_df["PlayerDNA"].value_counts().to_dict()
+            if "PlayerDNA" in squad_df.columns else {}
+        ),
+    }
+    summary_path = output_dir / f"squad_summary_{run_date}.json"
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
+    logger.info("Squad summary: %s", summary_path)
+    upload_gold_to_minio(summary_path, summary_path.name)
+    return summary
+
+
+def _check_guard_rails(summary: dict, args: argparse.Namespace) -> None:
+    """
+    Post-export sanity checks — catches the exact class of regression
+    documented in build_squad_summary()'s docstring (position_breakdown
+    silently computed from the wrong DataFrame) automatically, instead of
+    relying on someone noticing an impossible squad composition by eye.
+    """
+    for pos, cap in DEFAULT_POSITION_CAPS.as_dict().items():
+        actual = summary["position_counts"].get(pos, 0)
+        if actual != cap:
+            logger.error(
+                "POSITION CAP VIOLATION in squad_summary: %s = %d (expected %d). "
+                "build_squad_summary() may be reading the wrong DataFrame again.",
+                pos, actual, cap,
+            )
+    assert summary["squad_size"] == args.top_n, (
+        f"squad_summary squad_size={summary['squad_size']} != top_n={args.top_n} "
+        "— position cap + fill-remaining logic produced the wrong squad size."
+    )
+
+
+def _print_top_squad(top_df: pd.DataFrame, top_cols: list[str], args: argparse.Namespace) -> None:
+    """Prints the final top-N squad to the console/log."""
+    logger.info("=" * 60)
+    logger.info("TOP %d RECOMMENDED PLAYERS:", args.top_n)
+    logger.info("-" * 60)
+    for _, row in top_df[top_cols].iterrows():
+        logger.info(
+            "#%-3d %-28s %-8s %-25s DSS=%.4f  DNA=%s",
+            row["Rank"], row["player_name"], row["position"],
+            row.get("club", "")[:24], row["DSSScore"], row.get("PlayerDNA", "N/A"),
+        )
+    logger.info("=" * 60)
+
+
 def main() -> None:
     args     = parse_args()
     run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -527,200 +510,29 @@ def main() -> None:
     logger.info("Step 2/5 — Normalizing columns to [0, 1]...")
     df = normalize_all(df)
 
-    # ── Step 3: Compute sub-scores ────────────────────────────────────────────
-    if args.use_clubelo:
-        logger.info("Step 2.5/5 — Fetching real ClubElo ratings (--use-clubelo)...")
-        try:
-            from ingestion.loaders.clubelo_loader import load_clubelo_bronze, patch_league_quality
-            clubelo_result = load_clubelo_bronze(seed_df=df)
-            if clubelo_result.get("difficulty_by_league"):
-                patch_league_quality(clubelo_result, seed_df=df)
-                logger.info(
-                    "ClubElo: patched %d leagues with real Elo-based difficulty factors "
-                    "(replacing the hardcoded table for this run only — league_quality.py "
-                    "itself is unchanged on disk).",
-                    len(clubelo_result["difficulty_by_league"]),
-                )
-            else:
-                logger.warning(
-                    "ClubElo: fetch returned no usable data — falling back to the "
-                    "hardcoded LEAGUE_DIFFICULTY table (league_quality.py). This is "
-                    "the expected safe behavior on network failure, not a crash."
-                )
-        except Exception as e:
-            logger.warning(
-                "ClubElo fetch/patch failed (%s) — falling back to the hardcoded "
-                "LEAGUE_DIFFICULTY table. This --use-clubelo path has not been "
-                "tested end-to-end against the live API from every environment; "
-                "if this keeps failing, run "
-                "`python -c \"from ingestion.loaders.clubelo_loader import load_clubelo_bronze; "
-                "print(load_clubelo_bronze())\"` directly to see the raw error.",
-                e,
-            )
+    # ── Step 2.5 (optional): ClubElo enrichment ──────────────────────────────
+    _enrich_with_clubelo(df, args)
 
+    # ── Step 3: Sub-scores ────────────────────────────────────────────────────
     logger.info("Step 3/5 — Computing sub-scores...")
-    df = compute_performance_score(df)
-    df = compute_form_score(df)          # CONFLICT-01 FIX: uses form_final + rating_final
-    df = compute_mental_score(df)        # CONFLICT-03 FIX: StatsBomb proxy
-    df = compute_availability_score(df)
-    df = compute_international_score(df)
-    df = compute_chemistry_score(df)     # NEW 2026-07-14 — pairwise StatsBomb pass network
-    df = compute_pressure_index(df)      # NEW 2026-07-14 — StatsBomb intl xG vs club xG delta
-    df = compute_flexibility_score(df)   # NEW 2026-07-14 — UNTESTED upstream, see module docstring
-    df = compute_sentiment_score(df, use_nlp=not args.no_sentiment_nlp)  # NEW 2026-07-22
+    df = _compute_all_subscores(df, args)
 
     # ── Step 4: Final composite DSS score ─────────────────────────────────────
-    logger.info("Step 3.5/5 — Applying minutes filter (current season activity)...")
-    from analytics.scoring.minutes_filter import apply_minutes_filter as _mf
-    df = _mf(df)
-    inactive = df[df.get("minutes_flag", pd.Series("ACTIVE", index=df.index)).isin(["INACTIVE", "SEED_INACTIVE"])]
-    if not inactive.empty:
-        logger.warning(
-            "INACTIVE/SEED_INACTIVE players (AvailabilityScore penalised, DSSScore gate applied after scoring): %s",
-            ", ".join(inactive["player_name"].tolist())
-        )
+    df = _apply_final_scoring(df)
 
-    logger.info("Step 4/5 — Computing final DSSScore and ranking...")
-    df = compute_final_score(df)
-
-    # BUG-01 FIX (03_regression_protection.md / analytics/scoring/minutes_filter.py):
-    # this MUST run AFTER compute_final_score(), never before. apply_minutes_filter()
-    # above only classifies activity + penalizes AvailabilityScore; the actual
-    # DSSScore-level gate (the one that stops an injured/inactive player like
-    # Imran Louza topping the ranking on the strength of historical stats alone)
-    # is applied HERE, to the real freshly-computed DSSScore. Reordering these two
-    # calls silently reintroduces BUG-01 — no exception is raised, the gate's
-    # effect just vanishes, so tests/test_gold2_components.py's
-    # TestMinutesFilterWeightBinding class asserts on the actual numeric effect,
-    # not just that the functions were called.
-    from analytics.scoring.minutes_filter import apply_dss_gate
-    df = apply_dss_gate(df)
-
-    # WIRED IN 2026-07-14: was a fully-built, never-called module
-    # (analytics/scoring/percentile_score.py — confirmed zero call sites
-    # anywhere in the codebase before this). Adds DSSScore_pct for
-    # dashboard/report DISPLAY only — never changes Rank or squad
-    # selection (the module self-verifies this with a rank-mismatch check
-    # logged as an error if it ever occurs).
-    df = apply_percentile_scoring(df)
-
-    # ── Step 5: Player DNA (K-Means, ML layer — NEW 2026-07-29) ───────────────
-    # Descriptive/exploratory play-style tag, NOT a selection input — see
-    # analytics/ml/player_clustering.py module docstring for the full
-    # rationale (why this ships and Selection Classifier / Injury Predictor
-    # don't, yet). Wrapped in try/except: a clustering failure must never
-    # block a real squad-selection run, same pattern as --use-clubelo above.
-    if args.no_player_dna:
-        logger.info("Step 5/6 — Player DNA clustering SKIPPED (--no-player-dna).")
-        df["PlayerDNA"] = "N/A"
-        df["player_dna_cluster"] = pd.NA
-        df["dna_imputed_features_count"] = pd.NA
-        dna_archetype_map: dict = {}
-        dna_k = None
-    else:
-        logger.info("Step 5/6 — Player DNA clustering (K-Means)...")
-        try:
-            dna_result = cluster_players(df, k=args.player_dna_k)
-            df = dna_result.df
-            dna_archetype_map = dna_result.archetype_map
-            dna_k = dna_result.k
-            if dna_result.silhouette_table:
-                best_sil = dna_result.silhouette_table[dna_result.k]
-                sil_str = ", ".join(f"k={k}:{v:.3f}" for k, v in sorted(dna_result.silhouette_table.items()))
-                logger.info("Player DNA: k=%d chosen (silhouette=%.3f). All k tried: %s",
-                             dna_result.k, best_sil, sil_str)
-                if best_sil < 0.30:
-                    logger.warning(
-                        "Player DNA silhouette=%.3f (k=%d) is below the ~0.3-0.5 "
-                        "range usually considered real cluster structure — expected "
-                        "with continuous per-90 stats and %d outfield players. "
-                        "Treat PlayerDNA as a descriptive dashboard tag, NOT a "
-                        "selection input. See analytics/ml/player_clustering.py.",
-                        best_sil, dna_result.k, dna_result.n_outfield,
-                    )
-            logger.info("Player DNA archetype counts:\n%s",
-                         df["PlayerDNA"].value_counts().to_string())
-        except Exception as e:
-            logger.error(
-                "Player DNA clustering FAILED (%s) — falling back to 'N/A' for "
-                "everyone. Rest of the pipeline (scoring, squad selection) is "
-                "unaffected, since PlayerDNA is not a scoring input.", e,
-            )
-            df["PlayerDNA"] = "N/A"
-            df["player_dna_cluster"] = pd.NA
-            df["dna_imputed_features_count"] = pd.NA
-            dna_archetype_map = {}
-            dna_k = None
+    # ── Step 5: Player DNA ────────────────────────────────────────────────────
+    df, dna_archetype_map, dna_k = _run_player_dna(df, args)
 
     # ── Step 6: Export ────────────────────────────────────────────────────────
     logger.info("Step 6/6 — Exporting results...")
-
-    # Full scored table
-    full_path = output_dir / f"players_scored_{run_date}.csv"
-    df.to_csv(full_path, index=False)
-    logger.info("Full table: %s", full_path)
-    upload_gold_to_minio(full_path, full_path.name)
-
-    # Top-N squad recommendation — position-capped
-    squad_df = select_squad_with_position_cap(
-        df,
-        top_n=args.top_n,
-        use_flexibility_tiebreak=not args.no_flexibility_tiebreak,
-        flex_tiebreak_threshold=args.flex_tiebreak_threshold,
-        depth_chart_surplus_threshold=args.depth_chart_surplus_threshold,
-    )
-    top_df   = squad_df
-    top_cols = build_top_cols(top_df.columns)
-    top_path = output_dir / f"top{args.top_n}_{run_date}.csv"
-    top_df[top_cols].to_csv(top_path, index=False)
-    logger.info("Top-%d recommendation: %s", args.top_n, top_path)
-    upload_gold_to_minio(top_path, top_path.name)
-
-    # Squad summary JSON — MUST use squad_df (position-capped), not the raw df
-    summary = build_squad_summary(squad_df, df, args.top_n)
-    summary["percentile_summary"] = score_summary(df, top_n=args.top_n)  # WIRED IN 2026-07-14
-    # NEW 2026-07-29 — Player DNA breakdown WITHIN the selected squad only.
-    # Descriptive only: never used by select_squad_with_position_cap() above,
-    # squad selection already happened by the time this runs.
-    summary["player_dna"] = {
-        "k_chosen": dna_k,
-        "archetype_map": dna_archetype_map,
-        "squad_archetype_counts": (
-            squad_df["PlayerDNA"].value_counts().to_dict()
-            if "PlayerDNA" in squad_df.columns else {}
-        ),
-    }
-    summary_path = output_dir / f"squad_summary_{run_date}.json"
-    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
-    logger.info("Squad summary: %s", summary_path)
-    upload_gold_to_minio(summary_path, summary_path.name)
-
-    # ── Guard rail: catch this regression automatically next time ───────────
-    default_caps = {"GK": 3, "DEF": 9, "MID": 9, "FWD": 5}
-    for pos, cap in default_caps.items():
-        actual = summary["position_counts"].get(pos, 0)
-        if actual != cap:
-            logger.error(
-                "POSITION CAP VIOLATION in squad_summary: %s = %d (expected %d). "
-                "build_squad_summary() may be reading the wrong DataFrame again.",
-                pos, actual, cap,
-            )
-    assert summary["squad_size"] == args.top_n, (
-        f"squad_summary squad_size={summary['squad_size']} != top_n={args.top_n} "
-        "— position cap + fill-remaining logic produced the wrong squad size."
+    _export_full_table(df, output_dir, run_date)
+    squad_df, top_cols = _select_and_export_squad(df, args, output_dir, run_date)
+    summary = _build_and_export_summary(
+        squad_df, df, args, output_dir, run_date, dna_archetype_map, dna_k
     )
 
-    # ── Print top 26 to console ───────────────────────────────────────────────
-    logger.info("=" * 60)
-    logger.info("TOP %d RECOMMENDED PLAYERS:", args.top_n)
-    logger.info("-" * 60)
-    for _, row in top_df[top_cols].iterrows():
-        logger.info(
-            "#%-3d %-28s %-8s %-25s DSS=%.4f  DNA=%s",
-            row["Rank"], row["player_name"], row["position"],
-            row.get("club", "")[:24], row["DSSScore"], row.get("PlayerDNA", "N/A"),
-        )
-    logger.info("=" * 60)
+    _check_guard_rails(summary, args)
+    _print_top_squad(squad_df, top_cols, args)
 
 
 if __name__ == "__main__":
