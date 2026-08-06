@@ -5,7 +5,7 @@ decision-support modules and a password-gated, 12-page Streamlit dashboard
 (Home + 11 pages), built to help reason about Morocco's 26-man squad
 selection for the 2026 World Cup from a pool of 49 candidate players.
 
-Pipeline end-to-end لاختيار 26 لاعباً للمنتخب المغربي من قائمة 49 مرشحاً.
+End-to-end pipeline for selecting a 26-player Morocco national team squad from a pool of 49 candidate players.
 
 ---
 
