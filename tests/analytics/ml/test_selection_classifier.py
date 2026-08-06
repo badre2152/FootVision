@@ -1,9 +1,3 @@
-# tests/test_selection_classifier.py
-#
-# Test suite for analytics/ml/selection_classifier.py — added 2026-07-29
-# alongside the module itself, the same day real ground truth (the
-# 2026-05-26 official World Cup squad announcement) became available.
-
 import sys
 import os
 
@@ -22,10 +16,6 @@ from analytics.ml.selection_classifier import (
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# random_baseline_pvalue — check against known hypergeometric values
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestRandomBaselinePvalue:
     def test_matches_scipy_hypergeom_directly(self):
         from scipy.stats import hypergeom
@@ -34,7 +24,6 @@ class TestRandomBaselinePvalue:
         assert random_baseline_pvalue(49, 26, 26, 15) == pytest.approx(expected)
 
     def test_perfect_overlap_has_tiny_pvalue(self):
-        # overlap == n_predicted == n_real should be extremely unlikely by chance
         p = random_baseline_pvalue(49, 26, 26, 26)
         assert p < 0.001
 
@@ -46,10 +35,6 @@ class TestRandomBaselinePvalue:
         pvals = [random_baseline_pvalue(49, 26, 26, k) for k in range(0, 27)]
         assert all(pvals[i] >= pvals[i + 1] for i in range(len(pvals) - 1))
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# match_real_squad
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestMatchRealSquad:
     def test_exact_names_all_match(self):
@@ -80,15 +65,9 @@ class TestMatchRealSquad:
             match_real_squad(df, real_squad=["x"])
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# audit_vs_dss_ranking
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestAuditVsDssRanking:
     @pytest.fixture
     def toy_df(self):
-        # 10 players, Rank 1-10 by DSSScore. Real squad (top_n=4) = players
-        # ranked 1,2,9,10 -> overlap should be exactly {1,2} = 2.
         return pd.DataFrame({
             "player_name": [f"P{i}" for i in range(1, 11)],
             "position": ["MID"] * 10,
@@ -106,8 +85,8 @@ class TestAuditVsDssRanking:
         result = audit_vs_dss_ranking(toy_df, top_n=4)
         fp_names = {r["player_name"] for r in result["dss_favored_not_picked"]}
         fn_names = {r["player_name"] for r in result["picked_not_dss_favored"]}
-        assert fp_names == {"P3", "P4"}      # top-4 by rank, not in real squad
-        assert fn_names == {"P9", "P10"}     # in real squad, ranked outside top-4
+        assert fp_names == {"P3", "P4"}
+        assert fn_names == {"P9", "P10"}
 
     def test_requires_real_squad_selected_column(self):
         df = pd.DataFrame({"player_name": ["a"], "Rank": [1], "DSSScore": [0.5]})
@@ -115,16 +94,9 @@ class TestAuditVsDssRanking:
             audit_vs_dss_ranking(df, top_n=1)
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# fit_loocv_classifier
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestLoocvClassifier:
     @pytest.fixture
     def separable_labeled_df(self):
-        # Strongly separable synthetic data — a sanity check that the LOOCV
-        # loop is wired correctly (should score very well), not a claim
-        # about real football data (which does NOT look like this).
         rng = np.random.default_rng(0)
         n = 40
         y = np.array([1] * 20 + [0] * 20)
@@ -145,7 +117,7 @@ class TestLoocvClassifier:
 
     def test_single_class_label_raises(self):
         df = pd.DataFrame({f: [0.5] * 10 for f in CLASSIFIER_FEATURES})
-        df["real_squad_selected"] = 1  # everyone selected — no negative class
+        df["real_squad_selected"] = 1
         with pytest.raises(ValueError, match="single-class"):
             fit_loocv_classifier(df)
 

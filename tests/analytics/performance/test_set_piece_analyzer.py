@@ -1,5 +1,3 @@
-# tests/test_set_piece_analyzer.py
-
 import sys
 import os
 

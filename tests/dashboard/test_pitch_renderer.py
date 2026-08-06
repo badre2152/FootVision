@@ -1,9 +1,3 @@
-# tests/test_pitch_renderer.py
-#
-# Test suite for dashboard/pitch_renderer.py — added 2026-07-30.
-# No Streamlit runtime needed (module has zero Streamlit imports, same
-# convention as dashboard/data_loader.py).
-
 import sys
 import os
 from pathlib import Path
@@ -28,7 +22,6 @@ from dashboard.pitch_renderer import (
 
 
 def _real_2026_xi_df():
-    """11 players matching 'Real 2026 (1-4-5-1)' slot counts exactly."""
     rows = (
         [{"player_id": "P_GK", "player_name": "Test GK", "position": "GK"}]
         + [{"player_id": f"P_DEF{i}", "player_name": f"Def {i}", "position": "DEF"} for i in range(4)]
@@ -68,7 +61,6 @@ class TestCircularRgba:
         result = _circular_rgba(img_path, size=100)
         assert result is not None
         assert result.shape == (100, 100, 4)
-        # corners should be transparent (outside the circle), center opaque
         assert result[0, 0, 3] == 0
         assert result[50, 50, 3] == 255
 
@@ -99,7 +91,6 @@ class TestAssignXiToFormation:
             assign_xi_to_formation(df)
 
     def test_mismatched_position_counts_raises_loudly(self):
-        # 5 DEF instead of the 4 "Real 2026" formation expects
         df = pd.DataFrame(
             [{"player_id": f"P{i}", "player_name": f"P {i}", "position": "DEF"} for i in range(5)]
             + [{"player_id": "GK", "player_name": "GK", "position": "GK"}]
@@ -108,7 +99,6 @@ class TestAssignXiToFormation:
             assign_xi_to_formation(df, formation_name="Real 2026 (1-4-5-1)")
 
     def test_all_formations_are_internally_valid_11_man_shapes(self):
-        # sanity-check the FORMATIONS constant itself, not just the function
         for name, slots in FORMATIONS.items():
             assert len(slots) == 11, f"{name} has {len(slots)} slots, expected 11"
             counts = {}
@@ -133,12 +123,10 @@ class TestRenderPitch:
 
     def test_missing_player_id_falls_back_without_crashing(self):
         assigned = [{"player_name": "No Id Player", "position": "FWD", "x": 85, "y": 40}]
-        fig = render_pitch(assigned, show_photos=True)  # no player_id key at all
+        fig = render_pitch(assigned, show_photos=True)
         assert fig is not None
 
     def test_show_photos_false_ignores_existing_photo_file(self, tmp_path, monkeypatch):
-        # even if a photo exists, show_photos=False must skip photo lookup
-        # entirely and never touch the filesystem for it
         monkeypatch.setattr("dashboard.pitch_renderer.PLAYER_PHOTOS_DIR", tmp_path)
         (tmp_path / "P001.jpg").write_bytes(b"irrelevant")
         assigned = [{"player_id": "P001", "player_name": "Has Photo", "position": "GK", "x": 5, "y": 40}]

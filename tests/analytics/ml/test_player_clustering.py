@@ -1,20 +1,3 @@
-# tests/test_player_clustering.py
-#
-# Test suite for analytics/ml/player_clustering.py — the first ML component
-# added to this project (2026-07-29). Unit tests against small synthetic
-# DataFrames — no network, no MinIO, no real Gold run required.
-#
-# Coverage:
-#   - GKs are always excluded from K-Means and get the fixed "Gardien" label
-#   - select_k() picks a k that actually improves silhouette on separable data
-#   - cluster_players() is reproducible given a fixed random_state
-#   - missing-feature imputation uses position-group median, not global
-#   - graceful degradation: missing columns / too few players raise clear
-#     errors instead of silently producing garbage
-#   - archetype naming assigns 4 distinct names on well-separated synthetic
-#     archetype-shaped data (this is the one heuristic-y part of the module,
-#     so it gets the most scrutiny)
-
 import sys
 import os
 
@@ -34,17 +17,10 @@ from analytics.ml.player_clustering import (
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Fixtures
-# ─────────────────────────────────────────────────────────────────────────
-
 FEATURES = list(CLUSTER_FEATURES.keys())
 
 
 def _make_archetype_block(n, position, seed, **overrides):
-    """Builds n rows with mostly-flat feature values, nudged by `overrides`
-    to sit in a specific corner of feature space (i.e. simulate a real
-    archetype), plus small random noise so K-Means has something to do."""
     rng = np.random.default_rng(seed)
     data = {f: rng.normal(loc=overrides.get(f, 1.0), scale=0.05, size=n) for f in FEATURES}
     data["position"] = position
@@ -54,8 +30,6 @@ def _make_archetype_block(n, position, seed, **overrides):
 
 @pytest.fixture
 def separable_df():
-    """6 GKs + 4 well-separated outfield archetype blocks (8 players each =
-    32 outfield), so k=4 should clearly win the silhouette search."""
     gk = _make_archetype_block(6, "GK", seed=1)
 
     warrior = _make_archetype_block(
@@ -94,8 +68,6 @@ def separable_df():
 
 @pytest.fixture
 def small_realistic_df():
-    """49-ish rows, some missing feature values — mirrors the real project's
-    scale and NaN pattern, without needing the real Gold CSV."""
     rng = np.random.default_rng(7)
     n_gk, n_out = 6, 43
     gk = _make_archetype_block(n_gk, "GK", seed=10)
@@ -107,16 +79,11 @@ def small_realistic_df():
     df = pd.concat([gk, out], ignore_index=True)
     df["player_id"] = [f"P{i:03d}" for i in range(len(df))]
 
-    # Knock out ~12% of a couple of feature columns with NaN, outfield only
     for col in ["xg_per90", "sd_dribbles_per90"]:
         na_idx = df[df["position"] != "GK"].sample(frac=0.12, random_state=1).index
         df.loc[na_idx, col] = np.nan
     return df
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# GK exclusion
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestGoalkeeperExclusion:
     def test_gk_get_fixed_label_not_clustered(self, separable_df):
@@ -132,10 +99,6 @@ class TestGoalkeeperExclusion:
         assert len(result.centroids) == 4
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# select_k()
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestSelectK:
     def test_picks_k4_on_four_separable_blocks(self, separable_df):
         from sklearn.preprocessing import StandardScaler
@@ -150,7 +113,6 @@ class TestSelectK:
     def test_skips_k_too_large_for_n(self):
         X = np.random.default_rng(0).normal(size=(5, 3))
         best_k, table = select_k(X, k_range=(3, 6))
-        # only k=3, k=4 are < n=5
         assert set(table.keys()) <= {3, 4}
         assert best_k in table
 
@@ -159,10 +121,6 @@ class TestSelectK:
         with pytest.raises(ValueError):
             select_k(X, k_range=(3, 6))
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# Reproducibility
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestReproducibility:
     def test_same_seed_same_labels(self, small_realistic_df):
@@ -177,16 +135,11 @@ class TestReproducibility:
         assert len(result.df) == len(small_realistic_df)
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Imputation
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestImputation:
     def test_position_median_used_not_global(self):
         X = pd.DataFrame({"f": [10.0, 12.0, np.nan, 100.0, 102.0]})
         positions = pd.Series(["DEF", "DEF", "DEF", "FWD", "FWD"])
         filled, counts = _position_median_impute(X, positions)
-        # DEF median of [10, 12] = 11, NOT the global median (~12) or FWD's 101
         assert filled.loc[2, "f"] == 11.0
         assert counts.tolist() == [0, 0, 1, 0, 0]
 
@@ -194,14 +147,10 @@ class TestImputation:
         result = cluster_players(small_realistic_df, k=4)
         outfield = result.df[result.df["position"] != "GK"]
         assert (outfield["dna_imputed_features_count"] >= 0).all()
-        assert outfield["dna_imputed_features_count"].sum() > 0  # NaNs were injected
+        assert outfield["dna_imputed_features_count"].sum() > 0
         gk = result.df[result.df["position"] == "GK"]
         assert (gk["dna_imputed_features_count"] == 0).all()
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# Graceful degradation / input validation
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestInputValidation:
     def test_missing_position_column_raises(self):
@@ -211,19 +160,15 @@ class TestInputValidation:
 
     def test_too_few_outfield_players_raises(self):
         df = pd.DataFrame({f: [1.0] * 5 for f in FEATURES})
-        df["position"] = ["GK"] * 2 + ["DEF"] * 3  # only 3 outfield, need >= MIN_K+1=4
+        df["position"] = ["GK"] * 2 + ["DEF"] * 3
         with pytest.raises(ValueError, match="outfield"):
             cluster_players(df)
 
     def test_missing_feature_columns_degrade_not_crash(self, separable_df):
         df = separable_df.drop(columns=["sd_dribbles_per90", "sd_pass_acc_pct"])
-        result = cluster_players(df, k=4)  # should not raise
+        result = cluster_players(df, k=4)
         assert "PlayerDNA" in result.df.columns
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# Archetype naming
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestArchetypeNaming:
     def test_four_distinct_archetypes_on_separable_data(self, separable_df):

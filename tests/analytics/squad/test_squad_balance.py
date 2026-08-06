@@ -1,10 +1,3 @@
-# tests/test_squad_balance.py
-#
-# Test suite for analytics/squad_balance.py — squad age/experience balance
-# analysis (issue #16). Unit tests against small synthetic DataFrames, no
-# network/MinIO/Gold run required. Mirrors tests/test_injury_predictor.py's
-# style (fixed reference date, small synthetic rows) for consistency.
-
 import sys
 import os
 from datetime import date
@@ -23,7 +16,7 @@ from analytics.squad.squad_balance import (
     UNKNOWN_TIER,
 )
 
-AS_OF = date(2026, 6, 1)  # matches config.DECISION_DATE
+AS_OF = date(2026, 6, 1)
 
 
 def _row(player_name, dob, position, intl_caps=None):
@@ -37,13 +30,8 @@ def _df(*rows):
     return pd.DataFrame(list(rows))
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# _age_years / _age_tier — low-level helpers
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestAgeHelpers:
     def test_age_years_exact(self):
-        # Born exactly 23 years before AS_OF
         assert _age_years("2003-06-01", AS_OF) == pytest.approx(23.0, abs=0.01)
 
     def test_age_years_missing_dob_is_none(self):
@@ -54,7 +42,6 @@ class TestAgeHelpers:
         assert _age_years("not-a-date", AS_OF) is None
 
     def test_tier_boundaries(self):
-        # Tiers: Young <23, Prime 23-29, Experienced 30+
         assert _age_tier(22.99) == "Young (<23)"
         assert _age_tier(23.0) == "Prime (23-29)"
         assert _age_tier(29.99) == "Prime (23-29)"
@@ -65,17 +52,11 @@ class TestAgeHelpers:
         assert _age_tier(None) == UNKNOWN_TIER
 
     def test_tiers_sum_to_full_coverage(self):
-        # AGE_TIERS must cover [0, inf) with no gaps — sanity check the
-        # config itself, not just individual boundary points.
         assert AGE_TIERS[0][1] == 0.0
         for (_, _, hi), (_, lo_next, _) in zip(AGE_TIERS, AGE_TIERS[1:]):
             assert hi == lo_next
         assert AGE_TIERS[-1][2] is None
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# compute_age_distribution — required columns
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestRequiredColumns:
     def test_missing_wiki_dob_raises(self):
@@ -89,21 +70,17 @@ class TestRequiredColumns:
             compute_age_distribution(df, as_of=AS_OF)
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# compute_age_distribution — full synthetic squad covering all tiers
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestComputeAgeDistribution:
     @pytest.fixture
     def squad(self):
         return _df(
-            _row("Young GK",        "2004-01-01", "GK",  intl_caps=5),   # ~22 -> Young
-            _row("Prime GK",        "1999-01-01", "GK",  intl_caps=60),  # ~27 -> Prime
-            _row("Unknown DOB GK",  None,          "GK",  intl_caps=10), # -> Unknown
-            _row("Young DEF",       "2005-06-01", "DEF", intl_caps=2),   # ~21 -> Young
-            _row("Prime DEF",       "1998-06-01", "DEF", intl_caps=70),  # ~28 -> Prime
-            _row("Experienced DEF", "1993-01-01", "DEF", intl_caps=95),  # ~33 -> Experienced
-            _row("Experienced FWD", "1990-01-01", "FWD", intl_caps=100), # ~36 -> Experienced
+            _row("Young GK",        "2004-01-01", "GK",  intl_caps=5),
+            _row("Prime GK",        "1999-01-01", "GK",  intl_caps=60),
+            _row("Unknown DOB GK",  None,          "GK",  intl_caps=10),
+            _row("Young DEF",       "2005-06-01", "DEF", intl_caps=2),
+            _row("Prime DEF",       "1998-06-01", "DEF", intl_caps=70),
+            _row("Experienced DEF", "1993-01-01", "DEF", intl_caps=95),
+            _row("Experienced FWD", "1990-01-01", "FWD", intl_caps=100),
         )
 
     def test_overall_counts(self, squad):
@@ -140,8 +117,6 @@ class TestComputeAgeDistribution:
         result = compute_age_distribution(squad, as_of=AS_OF)
         assert result["n_unknown_dob"] == 1
         assert result["players_with_unknown_dob"] == ["Unknown DOB GK"]
-        # Total across all positions must still equal the full squad size —
-        # i.e. the unknown-DOB player is counted somewhere, not dropped.
         total_by_position = sum(
             sum(counts.values()) for counts in result["by_position"].values()
         )
@@ -151,9 +126,7 @@ class TestComputeAgeDistribution:
         result = compute_age_distribution(squad, as_of=AS_OF)
         avg_caps = result["overall_avg_caps"]
         assert avg_caps is not None
-        # Young tier: caps 5 and 2 -> avg 3.5
         assert avg_caps["Young (<23)"] == pytest.approx(3.5)
-        # Experienced tier: caps 95 and 100 -> avg 97.5
         assert avg_caps["Experienced (30+)"] == pytest.approx(97.5)
 
     def test_missing_intl_caps_column_omits_avg_caps_only(self):
@@ -163,7 +136,6 @@ class TestComputeAgeDistribution:
         )
         result = compute_age_distribution(df, as_of=AS_OF)
         assert result["overall_avg_caps"] is None
-        # Counts still computed fine without intl_caps.
         assert sum(result["overall"].values()) == 2
 
     def test_missing_player_name_column_gives_empty_unknown_list(self):

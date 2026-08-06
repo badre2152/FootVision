@@ -1,15 +1,3 @@
-# dashboard/app.py
-# Football Atlas — Streamlit Dashboard, Executive Overview (page 1/4)
-#
-# Added 2026-07-14. Run with:  streamlit run dashboard/app.py
-#
-# Reads the latest Gold output from gold/ (see data_loader.py). If you
-# haven't run run_gold.py yet, this shows a clear "no data" message
-# instead of crashing.
-#
-# Localized (issue #15) — all static text goes through dashboard/i18n.py's
-# t() helper so it follows the sidebar language switcher (EN/FR/AR).
-
 import sys
 from pathlib import Path
 
@@ -34,7 +22,7 @@ st.set_page_config(
     page_icon="⚽",
     layout="wide",
 )
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 
 render_sidebar()
 
@@ -55,7 +43,6 @@ st.caption(t(
     generated_at=summary.get('generated_at', 'unknown'),
 ))
 
-# ── KPI row ───────────────────────────────────────────────────────────────
 col1, col2, col3, col4 = st.columns(4)
 col1.metric(t("app.kpi_candidates"), summary.get("total_candidates", len(players)))
 col2.metric(t("app.kpi_squad_size"), summary.get("squad_size", len(top26)))
@@ -66,20 +53,16 @@ score_range = summary.get("score_range")
 if score_range:
     col4.metric(t("app.kpi_dss_range"), f"{score_range['min']:.3f} – {score_range['max']:.3f}")
 else:
-    # Older squad_summary.json (pre-2026-07-14) doesn't have score_range —
-    # compute it on the fly rather than hiding the metric entirely.
     col4.metric(t("app.kpi_dss_range"), f"{players['DSSScore'].min():.3f} – {players['DSSScore'].max():.3f}")
 
 st.divider()
 
-# ── Position breakdown ──────────────────────────────────────────────────────
 left, right = st.columns([1, 2])
 
 with left:
     st.subheader(t("app.position_breakdown"))
     position_counts = summary.get("position_counts")
     if position_counts is None:
-        # Older squad_summary.json — derive it from position_breakdown lists instead
         position_counts = {pos: len(names) for pos, names in summary.get("position_breakdown", {}).items()}
     counts_df = pd.DataFrame(list(position_counts.items()), columns=["Position", "Count"])
     fig = px.pie(counts_df, names="Position", values="Count", hole=0.4,
@@ -121,7 +104,6 @@ with right:
 
 st.divider()
 
-# ── Full squad table ─────────────────────────────────────────────────────
 st.subheader(t("app.squad_table_header", n=len(top26)))
 top26_filtered = apply_sidebar_filters(top26)
 display_cols = [c for c in [

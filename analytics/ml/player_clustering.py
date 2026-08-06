@@ -1,70 +1,3 @@
-# analytics/ml/player_clustering.py
-# ML Layer — Player DNA Clustering (K-Means)
-#
-# Added 2026-07-29. This is the FIRST ML component built for this project —
-# nothing under analytics/ml/ existed before this file. Player DNA was
-# always in the original PROJECT.md vision (K-Means k=4 -> Warrior / Brain /
-# Speedster / Rock) but stayed "Phase 4 — not built" through every session
-# up to and including the 2026-07-14 -> 2026-07-29 Gold-completion session.
-#
-# ─────────────────────────────────────────────────────────────────────────
-# WHY THIS MODULE EXISTS, AND WHY THE OTHER TWO ML COMPONENTS DON'T (YET)
-# ─────────────────────────────────────────────────────────────────────────
-# PROJECT.md's Phase 4 lists three ML models: Player DNA (K-Means),
-# Selection Classifier (RF/XGBoost), Injury Predictor (XGBoost).
-#
-# Only Player DNA is implemented here. The other two are NOT started,
-# deliberately, because with n=49 total candidates they are methodologically
-# unsound as currently scoped:
-#   - Selection Classifier needs a real binary label ("was this player
-#     actually selected by the coach, yes/no"). Using DSSScore's own top-26
-#     cutoff as the label would just be the classifier re-learning a
-#     monotonic function of the score that produced its own labels —
-#     circular, not a genuine prediction task. It only becomes meaningful
-#     once the real announced squad (the "Option B — historical simulation"
-#     held-out ground truth MASTER_SPEC.md § 1 describes) is available as
-#     y, and even then a 49-row train/test split needs leave-one-out CV,
-#     not a normal split, plus heavy regularization to avoid overfitting.
-#   - Injury Predictor needs a time-series injury history per player, not
-#     one static two-year aggregate (inj_count_2y, inj_days_missed_2y).
-#     Training XGBoost on 49 static rows to predict a scalar risk score
-#     would produce a number that LOOKS like a probability but has no real
-#     predictive validity — worse than no model, because it invites false
-#     confidence in a squad decision.
-#
-# Player DNA has neither problem: it's unsupervised (no label needed) and
-# it's explicitly descriptive/exploratory (a play-style tag for the
-# dashboard and coaching staff), not a decision the squad selection leans
-# on. That is why it goes first.
-#
-# ─────────────────────────────────────────────────────────────────────────
-# DESIGN NOTES
-# ─────────────────────────────────────────────────────────────────────────
-# - Goalkeepers are EXCLUDED from the K-Means fit entirely. GK metrics
-#   (GA_per90, save%) are structurally incomparable to outfield metrics
-#   (goals, tackles, passes) — mixing them would just produce a trivial
-#   "is this a goalkeeper" cluster instead of a real play-style signal.
-#   Only 6 GK candidates exist anyway, too few to sub-cluster meaningfully.
-#   GKs get a fixed archetype label ("Gardien") assigned directly.
-# - Features are raw per-90 / rate stats (not the Gold *_norm columns),
-#   StandardScaler'd inside this module. Gold's [0,1] min-max normalization
-#   is tuned for score aggregation, not for Euclidean-distance clustering;
-#   StandardScaler is the standard choice for K-Means.
-# - Missing feature values (5-6/43 outfield players per column — see
-#   coverage check in this module's own test suite) are filled with the
-#   POSITION-GROUP median, same convention as silver_pipeline.py's
-#   impute_by_position(), and flagged in `dna_imputed_features_count` so
-#   downstream consumers can see how much of a given player's profile is
-#   real vs. filled.
-# - k is NOT hardcoded to 4. select_k() tests k=3..6 (per ROADMAP.md's own
-#   "Tester K=3, 5, 6 -> choisir le meilleur silhouette score" instruction)
-#   and returns the best-scoring k plus the full silhouette table, so a
-#   different k than 4 is a legitimate outcome, not a bug, if the data
-#   genuinely doesn't support the storybook 4-way split. When k does not
-#   land on 4, the naming heuristic below still runs (it interprets
-#   centroids generically) but the output will use generic
-#   "Cluster N" labels beyond the four named archetypes.
-
 from __future__ import annotations
 
 import logging
@@ -78,33 +11,23 @@ from sklearn.preprocessing import StandardScaler
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────
-# Feature set (raw per-90 / rate columns — see coverage notes above)
-# ─────────────────────────────────────────────────────────────────────────
 CLUSTER_FEATURES: dict[str, str] = {
-    # offensive / creativity
     "Gls_per90":            "goals per 90",
     "Ast_per90":             "assists per 90",
     "xg_per90":              "expected goals per 90",
     "xa_per90":              "expected assists per 90",
     "sd_key_passes_per90":   "key passes per 90",
     "sd_dribbles_per90":     "dribbles per 90",
-    # physical / work-rate / duels
     "sb_pressures_per90":    "pressing actions per 90",
     "sd_duels_won_pct":      "duels won %",
-    # passing / vision
     "sb_passes_per90":       "passes per 90",
     "sd_pass_acc_pct":       "pass accuracy %",
     "sb_carries_per90":      "ball carries per 90",
-    # defensive
     "Tkl_per90":             "tackles per 90",
     "Int_per90":             "interceptions per 90",
     "Clr_per90":             "clearances per 90",
 }
 
-# Archetype naming heuristic: for each axis, which features push a centroid
-# toward that archetype. Values are z-scored centroid coordinates (after
-# StandardScaler), so "high" means above the outfield-player average.
 ARCHETYPE_AXES: dict[str, list[str]] = {
     "Warrior":   ["sb_pressures_per90", "sd_duels_won_pct", "Tkl_per90"],
     "Brain":     ["sb_passes_per90", "sd_pass_acc_pct", "sd_key_passes_per90"],
@@ -123,12 +46,12 @@ RANDOM_STATE = 42
 
 @dataclass
 class ClusteringResult:
-    df: pd.DataFrame                       # input df + PlayerDNA columns added
-    k: int                                  # chosen k
-    silhouette_table: dict[int, float]      # k -> silhouette score, all k tried
-    centroids: pd.DataFrame                 # k rows x features, z-scored space
-    archetype_map: dict[int, str]           # cluster_id -> archetype name
-    feature_coverage: dict[str, int]        # feature -> non-null count (outfield only)
+    df: pd.DataFrame
+    k: int
+    silhouette_table: dict[int, float]
+    centroids: pd.DataFrame
+    archetype_map: dict[int, str]
+    feature_coverage: dict[str, int]
     n_outfield: int
     n_gk: int
 
@@ -214,11 +137,8 @@ def _name_archetypes(centroids: pd.DataFrame) -> dict[int, str]:
     assigned_clusters: set[int] = set()
     assigned_archetypes: set[str] = set()
 
-    # Greedy assignment: repeatedly pick the single best remaining
-    # (archetype, cluster) pair until either side runs out.
     remaining = archetype_scores.copy()
     while len(assigned_archetypes) < len(ARCHETYPE_AXES) and len(assigned_clusters) < len(centroids):
-        # mask out already-assigned rows/cols
         masked = remaining.copy()
         masked.loc[list(assigned_clusters)] = -np.inf
         masked[list(assigned_archetypes)] = -np.inf

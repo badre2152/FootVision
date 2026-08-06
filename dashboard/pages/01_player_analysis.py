@@ -1,9 +1,5 @@
 # dashboard/pages/01_player_analysis.py
 # Football Atlas — Player Analysis page
-#
-# Radar chart of a selected player's composite sub-scores, using whichever
-# columns actually exist in the loaded players_scored_*.csv (older runs
-# won't have Chemistry/Pressure/Flexibility — see data_loader.py).
 
 import sys
 from datetime import datetime
@@ -19,10 +15,10 @@ from dashboard.sidebar import render_sidebar, apply_sidebar_filters
 from dashboard.auth import require_auth
 from dashboard.notes_store import get_note, save_note, NoteConflictError
 from dashboard.report_utils import csv_download_button, build_player_profile_pdf
-from analytics.scouting.rival_benchmark import compare_to_reference  # #23
+from analytics.scouting.rival_benchmark import compare_to_reference
 
 st.set_page_config(page_title="Football Atlas — Player Analysis", page_icon="📊", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("📊 Player Analysis")
 
@@ -61,7 +57,7 @@ col3.metric("DSSScore", f"{row['DSSScore']:.4f}", f"Rank #{int(row['Rank'])}")
 if "minutes_flag" in row.index:
     col4.metric("Minutes flag", row["minutes_flag"])
 if "PlayerDNA" in row.index and row["PlayerDNA"] not in (None, "N/A"):
-    col5.metric("Player DNA", row["PlayerDNA"])  # descriptive tag, not a score input
+    col5.metric("Player DNA", row["PlayerDNA"])
 
 st.divider()
 
@@ -96,19 +92,7 @@ with right:
 
 st.divider()
 
-# ── #23 — vs. International Reference ────────────────────────────────────
-# Contextual benchmarking ONLY — see analytics/rival_benchmark.py's module
-# docstring for why this is a SEPARATE radar chart on raw per-90 stats,
-# not an extra trace bolted onto the composite-sub-score radar above:
-# that radar's categories (PerformanceScore, FormScore, ...) are
-# percentiles computed relative to the 49 Morocco candidates — a rival
-# player was never in that pool, so plotting them on those exact axes
-# would be comparing incompatible things. Raw per-90 stats (goals/90,
-# tackles/90, ...) ARE comparable across any two players regardless of
-# pool, so that's what gets compared here instead — same chart TYPE and
-# visual pattern (Plotly Scatterpolar, filled radar) as above, reused
-# deliberately, just with its own category set and its own (display-only,
-# never touches DSSScore) scaling.
+# ── vs. International Reference ──────────────────────────────────────────
 st.subheader(f"🌍 {row['player_name']} vs. International Reference")
 st.caption(
     "Contextual benchmark only — reference player data never feeds DSSScore or any "
@@ -174,12 +158,7 @@ st.subheader(f"How does {row['player_name']} compare to other {row['position']}s
 same_position = players[players["position"] == row["position"]].sort_values("DSSScore", ascending=False)
 st.bar_chart(same_position.set_index("player_name")["DSSScore"])
 
-# ── #20 — Coach/Staff Notes ─────────────────────────────────────────────
-# Free-text qualitative judgment (training-ground impressions, character,
-# tactical fit) that no scraped data source captures — persisted in
-# data/coach_notes.json via dashboard/notes_store.py, deliberately
-# outside the Bronze/Silver/Gold pipeline so a `run_gold.py` re-run never
-# touches it (see that module's docstring for why).
+# ── Coach/Staff Notes ─────────────────────────────────────────────────────
 st.divider()
 st.subheader("📝 Coach/Staff Notes")
 st.caption(
@@ -208,9 +187,6 @@ with note_area_col:
     )
 
 if st.button("💾 Save note", key=f"coach_note_save_{selected_id}"):
-    # C1 fix: pass the version this page actually loaded (0 if no note
-    # existed yet) so a save that would silently clobber someone else's
-    # more recent edit is caught instead of just overwriting it.
     loaded_version = existing_note["version"] if existing_note else 0
     try:
         existing_note = save_note(

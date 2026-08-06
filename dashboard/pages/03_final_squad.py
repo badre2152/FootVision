@@ -1,13 +1,5 @@
 # dashboard/pages/03_final_squad.py
 # Football Atlas — Final Squad page
-#
-# The 26 selected players, grouped by position, with a short data-driven
-# justification per player built from their strongest sub-scores.
-#
-# Localized (issue #15) — fully translated, this is the most
-# decision-critical page for Coach Ouahbi's staff. All static text goes
-# through dashboard/i18n.py's t() helper so it follows the sidebar
-# language switcher (EN/FR/AR).
 
 import sys
 from datetime import datetime
@@ -26,12 +18,12 @@ from dashboard.auth import require_auth
 from dashboard.i18n import t
 from dashboard.notes_store import get_all_notes
 from dashboard.report_utils import csv_download_button, build_final_squad_pdf
-from analytics.ml.player_clustering import ARCHETYPE_EMOJI  # NEW 2026-07-29
-from analytics.squad.squad_balance import compute_age_distribution, TIER_ORDER, UNKNOWN_TIER  # #16
-from analytics.squad.depth_chart import get_replacement_candidates  # #10
+from analytics.ml.player_clustering import ARCHETYPE_EMOJI
+from analytics.squad.squad_balance import compute_age_distribution, TIER_ORDER, UNKNOWN_TIER
+from analytics.squad.depth_chart import get_replacement_candidates
 
 st.set_page_config(page_title="Football Atlas — Final Squad", page_icon="🏆", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title(t("nav.final_squad_title"))
 
@@ -47,7 +39,7 @@ if top26.empty:
 
 component_cols = available_component_columns(top26)
 
-# ── Export (spec #12) ──────────────────────────────────────────────────
+# ── Export ────────────────────────────────────────────────────────────────
 filters_applied = len(top26) != len(top26_full)
 exp_col1, exp_col2 = st.columns(2)
 with exp_col1:
@@ -69,18 +61,8 @@ st.caption(t("export.pdf_lang_note"))
 if filters_applied:
     st.caption(t("export.filtered_note"))
 
-# #20 — Coach/Staff Notes, compact read-only view. Loaded ONCE for all 26
-# players (not once per row) since notes_store.get_all_notes() reads the
-# whole JSON file — see that module's docstring for why this is decoupled
-# from the Bronze/Silver/Gold pipeline entirely (top26/players_scored
-# have nothing to do with where notes live).
 all_notes = get_all_notes()
 
-# #10 — Depth Chart / Replacement Candidates. Needs the FULL scored pool
-# (all 49, not just the selected 26) to look outside the squad, and the
-# selected_ids must come from top26_full["player_id"] (the actual
-# position-capped squad) — never a raw Rank<=26 shortcut, see
-# analytics/depth_chart.py::get_replacement_candidates()'s docstring.
 players_full = load_latest_players_scored()
 has_player_id = "player_id" in top26_full.columns
 if not has_player_id:
@@ -138,7 +120,6 @@ for pos in POSITION_ORDER:
                 player_id = row.get("player_id")
                 note = all_notes.get(str(player_id))
                 with st.expander(t("final_squad.replacement_expander")):
-                    # ── Coach note sub-section (#20) ────────────────────
                     st.markdown(f"**{t('final_squad.note_expander')}**")
                     if note and note.get("text"):
                         st.write(note["text"])
@@ -148,7 +129,6 @@ for pos in POSITION_ORDER:
 
                     st.divider()
 
-                    # ── Replacement candidates sub-section (#10) ────────
                     st.markdown(f"**{t('final_squad.replacement_header')}**")
                     if players_full is None or "player_id" not in players_full.columns:
                         st.caption(t("final_squad.replacement_no_player_id"))
@@ -181,18 +161,7 @@ if mismatches:
 else:
     st.success(t("final_squad.mismatch_success"))
 
-# ─────────────────────────────────────────────────────────────────────────
-# #16 — Squad Age/Experience Balance
-#
-# Uses top26_full (the whole 26-player squad), not the sidebar-filtered
-# `top26` — same reasoning as the position-cap check just above: this is a
-# whole-squad composition metric, not something that should change shape
-# because the coach happened to type a name into the search box.
-#
-# top26_full doesn't carry wiki_dob/intl_caps itself (Gold's top26_*.csv is
-# a lean summary — see dashboard/data_loader.py), so those two columns are
-# pulled in from the fuller players_scored_*.csv via a player_id merge.
-# ─────────────────────────────────────────────────────────────────────────
+# ── Squad Age/Experience Balance ─────────────────────────────────────────
 st.divider()
 st.subheader(t("final_squad.age_balance_header"))
 st.caption(t("final_squad.age_balance_caption", as_of=config.DECISION_DATE.isoformat()))
@@ -220,7 +189,6 @@ else:
             names=", ".join(dist["players_with_unknown_dob"]),
         ))
 
-    # Per-position one-line summary, e.g. "GK: 1 young / 2 prime / 0 experienced"
     for pos in POSITION_ORDER:
         counts = dist["by_position"].get(pos)
         if not counts:
@@ -239,7 +207,6 @@ else:
             unknown_suffix=unknown_suffix,
         ))
 
-    # Stacked bar chart — tier distribution by position.
     chart_rows = [
         {"position": pos, "tier": tier_display[tier], "count": count, "_tier_order": TIER_ORDER.index(tier)}
         for pos, counts in dist["by_position"].items()
@@ -267,7 +234,6 @@ else:
         fig.update_layout(barmode="stack", height=360, margin=dict(t=50, b=20))
         st.plotly_chart(fig, width='stretch')
 
-    # Average international caps per tier — simple experience proxy.
     if dist["overall_avg_caps"] is not None:
         st.markdown(f"**{t('final_squad.age_balance_avg_caps_header')}**")
         caps_rows = [

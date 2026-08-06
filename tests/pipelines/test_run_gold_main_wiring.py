@@ -1,27 +1,3 @@
-# tests/pipelines/test_run_gold_main_wiring.py
-#
-# Added alongside the C4 refactor (pipelines/gold/run_gold.py::main() split
-# from one ~220-line function into named stage functions — see that file's
-# module docstring). Before the split, testing that the pipeline stages ran
-# in the right order with the right data flowing between them required
-# running the ENTIRE real pipeline (Silver from real/mocked Bronze, real
-# scoring, etc.) — impractical to do as a fast, isolated unit test, so
-# nothing tested this "wiring" directly; only individual pieces of logic
-# were unit-tested (see test_gold2_components.py) and the ordering
-# constraint documented in _apply_final_scoring()'s docstring (BUG-01) was
-# enforced by a comment, not a test.
-#
-# This test mocks every stage function and asserts:
-#   1. They are called in the documented order.
-#   2. Each stage receives the DataFrame returned by the PREVIOUS stage
-#      (not, say, the original unscored df, which was the shape of a past
-#      real bug class in pipelines like this one).
-#   3. args flows through to every stage that declares it needs args.
-#
-# No real Silver/Bronze/MinIO/network access — everything below main() is
-# mocked, so this runs in milliseconds and needs nothing but MINIO_MOCK=1's
-# usual test-mode assumptions (ensure_minio_buckets is itself mocked here).
-
 import os
 import sys
 
@@ -34,7 +10,6 @@ from pipelines.gold import run_gold
 
 
 class _FakeArgs:
-    """Minimal stand-in for argparse.Namespace with just what main() reads directly."""
     output_dir = "gold"
     top_n = 26
 
@@ -45,10 +20,6 @@ def call_log():
 
 
 def _tag(df: pd.DataFrame, tag: str) -> pd.DataFrame:
-    """Returns a NEW DataFrame carrying `tag` so later assertions can prove
-    which stage's output actually reached the next stage (a plain `df` copy
-    with no traceable identity wouldn't catch a wiring mistake like passing
-    the wrong variable)."""
     out = df.copy()
     out["_stage"] = tag
     return out
@@ -72,7 +43,6 @@ def test_main_calls_stages_in_order_with_correct_data_flow(monkeypatch, call_log
 
     def fake_enrich(df, args):
         call_log.append(("_enrich_with_clubelo", df["_stage"].iloc[0], args is not None))
-        # real _enrich_with_clubelo doesn't mutate/return df — matches that.
     monkeypatch.setattr(run_gold, "_enrich_with_clubelo", fake_enrich)
 
     def fake_subscores(df, args):
@@ -141,12 +111,6 @@ def test_main_calls_stages_in_order_with_correct_data_flow(monkeypatch, call_log
 
 
 def test_main_passes_squad_df_not_full_df_to_print_top_squad(monkeypatch, tmp_path):
-    """
-    Narrower, more readable companion to the full-log test above: pins the
-    specific thing build_squad_summary()'s own docstring warns is easy to
-    get backwards (using the capped squad_df vs. the full candidate df) —
-    here for the console-printed top-N table rather than the summary JSON.
-    """
     seed_df = pd.DataFrame({"player_id": ["P001"], "player_name": ["X"], "position": ["GK"]})
 
     monkeypatch.setattr(run_gold, "parse_args", lambda: _FakeArgs())

@@ -1,11 +1,5 @@
 # dashboard/pages/02_chemistry.py
 # Football Atlas — Chemistry Matrix page
-#
-# Heatmap of REAL pairwise pass-network data from StatsBomb Open Data
-# (see analytics/scoring/chemistry_score.py + ingestion/loaders/
-# statsbomb_loader.py::_aggregate_pairwise_chemistry). Only covers the
-# 11/49 candidates who appeared in WC2018/2022 or AFCON2023 matches — this
-# page says so explicitly rather than implying full 49x49 coverage.
 
 import sys
 from pathlib import Path
@@ -22,7 +16,7 @@ from dashboard.auth import require_auth
 from dashboard.report_utils import csv_download_button
 
 st.set_page_config(page_title="Football Atlas — Chemistry Matrix", page_icon="🔗", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("🔗 Chemistry Matrix")
 st.caption(
@@ -81,16 +75,7 @@ top_pairs_display = top_pairs[["player_a_name", "player_b_name", "chem_per90", "
 st.dataframe(top_pairs_display, width='stretch', hide_index=True)
 csv_download_button(top_pairs_display, filename_prefix="chemistry_best_duos", key="csv_chemistry")
 
-# ── #19 — ChemistryScore real vs imputed transparency ──────────────────────
-# The heatmap/duos above only ever show REAL pairs (11/49 candidates) —
-# by construction it can't be misleading. But ChemistryScore/chem_avg_per90
-# in the Gold output is 49/49 non-null AFTER Silver's position-group median
-# imputation, and until now there was no visual signal telling a dashboard
-# reader which of those 49 values are a player's own real pairwise signal
-# vs. a neutral position-median fallback — the same gap PressureIndex had
-# on the Set Piece & Clutch page (see analytics/set_piece_analyzer.py),
-# now closed here using the "chem_is_real" flag set in
-# ingestion/silver_pipeline.py::join_chemistry_pairs() BEFORE imputation.
+# ── ChemistryScore — real vs imputed transparency ───────────────────────
 st.divider()
 st.subheader("ChemistryScore — real vs imputed (all candidates)")
 
@@ -105,9 +90,6 @@ else:
     if "chem_is_real" in players.columns:
         confidence = players["chem_is_real"].map({True: "Real", False: "Imputed"})
     elif "chem_num_partners" in players.columns:
-        # Backward-compat fallback for Gold files produced before the
-        # chem_is_real flag existed (chem_num_partners > 0 implies the
-        # same thing, just not as an explicit column).
         confidence = (players["chem_num_partners"] > 0).map({True: "Real", False: "Imputed"})
     else:
         confidence = pd.Series("Unknown", index=players.index)

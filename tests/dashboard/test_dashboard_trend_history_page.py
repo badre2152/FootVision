@@ -1,15 +1,3 @@
-# tests/test_dashboard_trend_history_page.py
-#
-# Headless AppTest smoke test for spec "18_historical_trend_view.md" (#18).
-#
-# Re-created 2026-08-02: this file existed in an earlier session but was
-# lost somewhere in a later rewrite of the test suite. Runs
-# dashboard/pages/09_trend_history.py as a real (headless) Streamlit script
-# via st.testing.v1.AppTest — no browser, no running server. Uses whatever
-# real gold/players_scored_*.csv / squad_summary_*.json fixtures are
-# already committed in this repo (same assumption as
-# tests/test_dashboard_post_hoc_banner.py and friends).
-
 import os
 import sys
 from pathlib import Path
@@ -26,7 +14,7 @@ TREND_PAGE = "dashboard/pages/09_trend_history.py"
 
 def _run():
     at = AppTest.from_file(str(PROJECT_ROOT / TREND_PAGE))
-    at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+    at.session_state["_auth_ok"] = True
     at.run(timeout=60)
     assert not at.exception, f"{TREND_PAGE} raised: {at.exception}"
     return at
@@ -37,13 +25,6 @@ def test_page_loads_without_error():
 
 
 def test_page_shows_pre_cutoff_fix_banner_when_any_snapshot_predates_the_fix():
-    """
-    Every real gold/players_scored_*.csv fixture currently checked into
-    this repo predates spec #1's implementation (no squad_summary_*.json
-    in the repo currently sets decision_date_enforced: true), so the page
-    MUST render the pre-cutoff-fix warning rather than silently treating
-    that history as validated.
-    """
     from dashboard.components import PRE_CUTOFF_FIX_BANNER_TITLE
 
     at = _run()

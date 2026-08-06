@@ -1,10 +1,6 @@
-# Football DSS — .gitignore
-
-# Environment
 .env
 *.env
 
-# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -17,12 +13,6 @@ venv/
 env/
 .venv/
 
-# Pipeline outputs (Bronze/Silver/Gold) — always regeneratable via
-# `make bronze` / `make silver` / `make gold`. Never commit generated
-# data artifacts, regardless of layer — this used to be inconsistent
-# (only gold/ was ignored while bronze/ and silver/ were committed,
-# ~52 tracked artifact files / 17MB of duplicate timestamped CSV+parquet
-# pairs). See docs/architecture.md.
 /bronze/
 /silver/
 /gold/
@@ -30,38 +20,26 @@ env/
 !/silver/.gitkeep
 !/gold/.gitkeep
 
-# Logs
 logs/*.log
 !logs/.gitkeep
 
 *.csv.bak
 
-# Coach Notes SQLite store (C1 concurrency fix) — regenerated automatically
-# from the tracked data/coach_notes.json seed via one-time migration on
-# first run (see dashboard/notes_store.py). The legacy .json IS tracked
-# (kept as the durable, git-diffable backup); the live .db is not, same
-# reasoning as Bronze/Silver/Gold: don't commit a binary file that
-# changes on every write when it's regenerable.
 data/coach_notes.db
 data/coach_notes.db-wal
 data/coach_notes.db-shm
 
-# Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
 .DS_Store
 Thumbs.db
 
-# MinIO local data (docker volume)
 minio_data/
 
-# spec #6 — never commit the real shared password
 .streamlit/secrets.toml

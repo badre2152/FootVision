@@ -1,63 +1,3 @@
-# dashboard/pitch_renderer_html.py
-# Football Atlas — Tactical Board, premium HTML/CSS pitch renderer
-#
-# Added 2026-08-02 (Tactical Board redesign), extended 2026-08-02 (v2:
-# zoom/pan/fullscreen toolbar, tactical spine lines, floodlight+grain
-# polish, position legend — see CHANGELOG.md entry #7). Renders the same
-# formation data dashboard/pitch_renderer.py has always produced — same
-# assign_xi_to_formation(), same FORMATIONS coordinates, same
-# find_player_photo() lookup — as a self-contained HTML document meant for
-# st.iframe()/st.components.v1.html(), instead of a static matplotlib
-# image.
-#
-# WHY A SEPARATE FILE INSTEAD OF EDITING pitch_renderer.py
-# ─────────────────────────────────────────────────────────────────────────
-# render_pitch() (matplotlib) is protected by 19 tests in
-# tests/test_pitch_renderer.py and this was an explicit constraint on the
-# redesign ("don't change any backend logic or functionality"). A static
-# image genuinely cannot do CSS gradients, hover states, zoom, or entrance
-# animations — no styling of a matplotlib Figure gets there — so the
-# rendering TECHNOLOGY has to change to deliver the brief. Keeping that
-# change in a new file means dashboard/pitch_renderer.py — and every test
-# that protects it — is untouched: zero risk to existing coverage, and
-# render_pitch() stays available if anything else in this codebase still
-# wants a plain static image (CSV/PDF export, etc.).
-#
-# WHAT THIS MODULE DOES NOT DO
-# ─────────────────────────────────────────────────────────────────────────
-# No formation math, no slot assignment, no scoring. It takes the already-
-# assigned list of dicts (x, y, player_name, position, player_id, plus
-# whatever optional display-only fields the caller merged in — DSSScore,
-# club — assign_xi_to_formation() itself is never touched) and turns it
-# into markup + a tiny bit of client-side JS for zoom/pan/fullscreen. If
-# the shape of the XI is wrong, the bug is in dashboard/pitch_renderer.py
-# or the calling page, not here.
-#
-# COORDINATE SYSTEM
-# ─────────────────────────────────────────────────────────────────────────
-# mplsoccer's `Pitch(pitch_type="opta")` uses a NORMALIZED 0-100 x 0-100
-# coordinate space for both axes (confirmed via Pitch().dim — this
-# project's own FORMATIONS comment calling it "0-80 width" was incorrect;
-# the real pitch aspect ratio, 105m x 68m, is applied by mplsoccer at DRAW
-# time, not baked into the coordinate values). To reproduce the exact same
-# visual layout here: left% = x, top% = y, and the pitch CONTAINER's
-# aspect-ratio (not the coordinate space) carries the real 105:68 shape.
-#
-# ZOOM/PAN/FULLSCREEN — WHY IT'S BUILT THIS WAY
-# ─────────────────────────────────────────────────────────────────────────
-# st.iframe(html, height="content") measures content height ONCE at load.
-# If zooming resized the pitch's actual layout box, the iframe's fixed
-# height would either clip the zoomed-in view or leave dead space when
-# zoomed out. Instead, zoom is a CSS `transform: scale()` applied INSIDE a
-# fixed-aspect-ratio viewport with `overflow: hidden` — the outer box
-# (and therefore the iframe height Streamlit measured) never changes size;
-# only what's visually drawn inside it does. Panning (drag, only active
-# once zoomed in) is a second transform: translate() layered on the same
-# element. Fullscreen uses the standard Fullscreen API on the whole
-# board-wrap; if the browser/embedding context doesn't support it, the
-# button hides itself via a feature check instead of doing nothing on
-# click.
-
 from __future__ import annotations
 
 import base64
@@ -67,10 +7,6 @@ from pathlib import Path
 
 from dashboard.pitch_renderer import find_player_photo
 
-# Real pitch dimensions (meters) — used only to compute marking sizes as
-# percentages of the 0-100 x 0-100 coordinate space so they render as
-# correctly-proportioned circles/rectangles once the container's
-# aspect-ratio: 105/68 stretches that space into the real pitch shape.
 _PITCH_LENGTH_M = 105.0
 _PITCH_WIDTH_M = 68.0
 _CENTER_CIRCLE_R_M = 9.15
@@ -88,9 +24,6 @@ _SY_LEN = _SIX_YARD_LENGTH_M / _PITCH_LENGTH_M * 100
 _SY_WID = _SIX_YARD_WIDTH_M / _PITCH_WIDTH_M * 100
 _PEN_SPOT_X = _PENALTY_SPOT_M / _PITCH_LENGTH_M * 100
 
-# Position palette — richer/gradient-friendly than pitch_renderer.py's flat
-# POSITION_COLORS (that constant stays as-is; matplotlib markers don't
-# benefit from a two-stop gradient the way a CSS ring does).
 POSITION_GRADIENTS: dict[str, tuple[str, str]] = {
     "GK": ("#f0d060", "#b8860b"),
     "DEF": ("#60a5fa", "#1d4ed8"),
@@ -104,11 +37,6 @@ _POSITION_CHIP = {"GK": "GK", "DEF": "D", "MID": "M", "FWD": "F"}
 
 
 def _photo_data_uri(player_id: str | None) -> str | None:
-    """Base64-embeds a player photo so it survives inside the sandboxed
-    iframe (which can't resolve local filesystem paths). Reuses
-    find_player_photo() — the same lookup pitch_renderer.py's matplotlib
-    path already uses — so both renderers treat "no photo" the exact same
-    way. Never raises; returns None on any read failure."""
     path = find_player_photo(player_id)
     if path is None:
         return None
@@ -127,12 +55,6 @@ def _initials_marker(name: str) -> str:
 
 
 def _club_monogram(club: str | None) -> str:
-    """2-3 letter club monogram from the club name, e.g. 'Paris
-    Saint-Germain' -> 'PSG', 'West Ham' -> 'WH'. Deliberately NOT a real
-    club crest image — those are trademarked logos this project has no
-    rights to reproduce. A generated text monogram gives the same "club
-    badge" visual read (see the Champions League/PSG-Inter reference
-    graphics) without that problem."""
     if not club:
         return ""
     words = [w for w in club.replace("-", " ").split() if w]
@@ -141,9 +63,6 @@ def _club_monogram(club: str | None) -> str:
 
 
 def _pitch_markings_svg() -> str:
-    """Static SVG markings layer — viewBox 0 0 100 100 matches the
-    coordinate space player markers use (left%=x, top%=y), so no separate
-    scaling math is needed between the two layers."""
     cx, cy = 50, 50
     return f'''
     <svg class="pitch-markings" viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
@@ -162,12 +81,6 @@ def _pitch_markings_svg() -> str:
 
 
 def _tactical_spine_svg(assigned_players: list[dict]) -> str:
-    """Thin glowing line connecting each formation line's centroid
-    (GK -> DEF -> MID -> FWD, whichever groups are actually present) —
-    a common broadcast-graphic touch that reads the team's shape at a
-    glance without cluttering individual player connections. Purely
-    decorative/display — computed from the SAME x/y assign_xi_to_formation()
-    already produced, nothing recalculated."""
     centroids = []
     for pos in _POSITION_ORDER:
         pts = [(p["x"], p["y"]) for p in assigned_players if p.get("position") == pos]
@@ -199,10 +112,6 @@ def _tactical_spine_svg(assigned_players: list[dict]) -> str:
 
 
 def _grain_svg_data_uri() -> str:
-    """A near-invisible SVG film-grain texture (feTurbulence) tiled over
-    the pitch for a broadcast-quality "lit surface" feel instead of a
-    flat CSS gradient. Static/deterministic (baseFrequency fixed) so it's
-    identical on every render, not distracting motion."""
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">'
         '<filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" '
@@ -218,34 +127,6 @@ def render_pitch_html(
     subtitle: str | None = None,
     show_photos: bool = True,
 ) -> tuple[str, int]:
-    """
-    Builds a self-contained HTML document for the tactical board pitch,
-    including a zoom/pan/fullscreen toolbar and position legend.
-
-    assigned_players: same shape assign_xi_to_formation() already returns
-        (player_id, player_name, position, x, y) — the caller MAY merge in
-        extra display-only keys before calling this, all optional:
-        dss_score, club (shown in the hover tooltip and club monogram
-        badge), and performance_score/form_score/mental_score/
-        availability_score/player_dna (shown in the click-to-inspect
-        detail panel — any missing ones are just omitted from the panel,
-        never an error).
-    show_photos: identical meaning/behavior to render_pitch()'s param —
-        False always shows the initials marker, even if a photo exists.
-
-    Clicking a player opens an in-widget detail panel (name, position,
-    club, score breakdown, Player DNA badge). This is CLIENT-SIDE ONLY —
-    st.iframe() has no channel back into Streamlit's Python
-    session_state/rerun cycle for a plain HTML embed like this one (that
-    would need a full custom bidirectional Streamlit component), so the
-    click is fully self-contained inside this widget and does not affect
-    anything else on the page.
-
-    Returns (html_string, recommended_iframe_height_px) — the height is
-    only used as a fallback for callers stuck on the older
-    st.components.v1.html() API; st.iframe(height="content") ignores it
-    and measures the real rendered height instead.
-    """
     cards = []
     for i, p in enumerate(assigned_players):
         pos = p.get("position", "")
@@ -345,16 +226,6 @@ def render_pitch_html(
     width: 100vw; height: 100vh; border-radius: 0;
     padding: 28px;
   }}
-  /* Fallback "maximize" — used when the real Fullscreen API is blocked
-     (Streamlit's st.iframe sandbox doesn't include the allow-fullscreen
-     token, so document.fullscreenEnabled is false in practice — see
-     pitch_renderer_html.py's module docstring). Height is set via inline
-     style by JS (computed from the real browser viewport, read through
-     window.top since the sandboxed iframe has allow-same-origin) rather
-     than a fixed CSS value, then Streamlit's own iframe auto-resize
-     mechanism grows the REAL <iframe> on the page to match — this
-     actually enlarges the embedded board on the page, not just a
-     same-size overlay. */
   .board-wrap.is-maxed {{
     display: flex; flex-direction: column;
   }}
@@ -393,8 +264,6 @@ def render_pitch_html(
     font-weight: 700; font-size: 13px; letter-spacing: 0.06em;
     white-space: nowrap; padding-top: 2px;
   }}
-
-  /* ── toolbar ─────────────────────────────────────────────────── */
   .board-toolbar {{
     display: flex; align-items: center; gap: 6px;
     margin-bottom: 10px; padding: 0 2px;
@@ -420,8 +289,6 @@ def render_pitch_html(
     display: none;
   }}
   .board-wrap:not(.is-fullscreen) .tb-hint.show-hint {{ display: block; }}
-
-  /* ── pitch viewport / zoom+pan layer ────────────────────────────── */
   .pitch-viewport {{
     position: relative;
     width: 100%;
@@ -432,15 +299,6 @@ def render_pitch_html(
     transition: transform 320ms ease, box-shadow 320ms ease;
     transform-style: preserve-3d;
   }}
-  /* Broadcast camera angle — OPTIONAL, off by default, toggled by the
-     toolbar button. Worth flagging: none of the 4 reference images were
-     actually tilted (all flat top-down) — this isn't "from the pics", it's
-     an extra idea borrowed from other broadcast lineup graphics. Kept
-     off by default and toggle-able rather than forced on for that reason.
-     Applied to the WHOLE viewport (markings + players together as one
-     flat plane), not the markings layer alone, so nothing shifts out of
-     alignment with the player markers sitting in the same percentage
-     coordinate space. */
   .pitch-viewport.tilted {{
     transform: perspective(1500px) rotateX(13deg) scale(0.97);
     box-shadow: 0 34px 60px -18px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(255,255,255,0.06);
@@ -588,8 +446,6 @@ def render_pitch_html(
   .pn-tooltip strong {{ display: block; color: #fff; font-size: 12px; margin-bottom: 1px; }}
   .pn-tooltip span {{ color: var(--text-secondary); }}
   .player-node:hover .pn-tooltip {{ opacity: 1; transform: translateX(-50%) translateY(0); }}
-
-  /* ── legend ──────────────────────────────────────────────────── */
   .board-legend {{
     display: flex; flex-wrap: wrap; gap: 16px;
     margin-top: 14px; padding: 0 4px;
@@ -599,8 +455,6 @@ def render_pitch_html(
     font-size: 11px; color: var(--text-secondary); font-weight: 500;
   }}
   .legend-dot {{ width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }}
-
-  /* ── click-to-inspect detail panel ──────────────────────────────── */
   .detail-panel {{
     max-height: 0;
     opacity: 0;
@@ -761,22 +615,6 @@ def render_pitch_html(
     shell.classList.remove('is-panning');
   }});
 
-  // Fullscreen / Maximize
-  // ─────────────────────────────────────────────────────────────────
-  // The real Fullscreen API is usually BLOCKED here: st.iframe renders
-  // this inside a sandboxed iframe whose sandbox tokens don't include
-  // "allow-fullscreen" (checked directly against the installed
-  // Streamlit's own frontend bundle — see this file's module docstring),
-  // so document.fullscreenEnabled is normally false no matter what this
-  // script does. Real Fullscreen is still attempted first in case a
-  // future Streamlit version or a different embedding context allows it;
-  // when it's blocked, this falls back to actually RESIZING the real
-  // <iframe> element on the page instead of a same-size overlay:
-  // Streamlit's iframe component watches the embedded document's size via
-  // postMessage and grows the iframe to match (see IFrame.*.js in the
-  // installed package) — so setting a much bigger inline height here and
-  // letting that mechanism report it genuinely enlarges the board on the
-  // real page, not just inside an unchanged-size box.
   var fsBtn = document.getElementById('fullscreen-btn');
   var realFullscreenOK = document.fullscreenEnabled || document.webkitFullscreenEnabled;
   var maxed = false;
@@ -787,7 +625,7 @@ def render_pitch_html(
       if (window.top && window.top !== window) {{
         return {{ w: window.top.innerWidth, h: window.top.innerHeight }};
       }}
-    }} catch (e) {{ /* cross-origin — fall through */ }}
+    }} catch (e) {{}}
     return {{ w: window.innerWidth, h: window.innerHeight }};
   }}
 
@@ -827,7 +665,7 @@ def render_pitch_html(
       var isFs = document.fullscreenElement || document.webkitFullscreenElement;
       if (!isFs) {{
         (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap).catch(function() {{
-          realFullscreenOK = false;  // request rejected despite the check — fall back from now on
+          realFullscreenOK = false;
           maxed ? exitMaximize() : enterMaximize();
         }});
       }} else {{
@@ -846,13 +684,6 @@ def render_pitch_html(
 
   apply();
 
-  // ── click-to-inspect ─────────────────────────────────────────────
-  // NOTE: this is CLIENT-SIDE ONLY. st.iframe() has no return channel
-  // back into Streamlit's Python session_state/rerun cycle (that would
-  // need a full custom bidirectional component, not a plain HTML embed)
-  // — so clicking a player opens a real detail panel inside this same
-  // widget, but does not (and structurally can't, from a plain st.iframe)
-  // feed the click back into the rest of the Streamlit app.
   var panel = document.getElementById('detail-panel');
   var panelBody = document.getElementById('dp-body');
   var selectedNode = null;
@@ -917,16 +748,6 @@ def render_pitch_html(
 
 
 def render_setup_panel_css() -> str:
-    """
-    Returns a <style> block (page-scoped — only affects the Tactical Board
-    page's own DOM, including its sidebar, since it's injected once via
-    st.markdown from that page file only, not from any shared module other
-    pages import). Restyles native Streamlit widgets in the left setup
-    column + this page's sidebar into the same dark/gold token system as
-    render_pitch_html(), without touching dashboard/sidebar.py's Python
-    (which 11 other pages also import) — purely a visual skin for this
-    page's session.
-    """
     return '''
     <style>
     [data-testid="stSidebar"] {

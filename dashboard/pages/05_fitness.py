@@ -1,21 +1,5 @@
 # dashboard/pages/05_fitness.py
 # Football Atlas — Fitness & Rotation page
-#
-# Added 2026-07-30. Uses analytics/ml/injury_predictor.py (transparent,
-# rule-based risk index — NOT a trained model, see that module's
-# docstring) + Gold's existing AvailabilityScore.
-#
-# IMPORTANT: InjuryRiskLevel is advisory only, same rule as everywhere
-# else it's used in this project — it must NEVER be treated as an
-# automatic exclusion filter for squad selection. This page presents it
-# for the medical/coaching staff to review, nothing more. See
-# injury_predictor.py's "CRITICAL: DO NOT DOUBLE-COUNT" section for why
-# it's also never summed into DSSScore.
-#
-# "Rotation Strategy sur 3 matchs" (ROADMAP.md § Jour 7) is NOT built —
-# that needs an opponent/fixture-by-fixture minutes-management model this
-# project has no data or design for yet (a separate, bigger scope than
-# this page). This page covers the "Fitness" half only, honestly.
 
 import sys
 from pathlib import Path
@@ -32,7 +16,7 @@ from dashboard.report_utils import csv_download_button
 from analytics.ml.injury_predictor import compute_injury_risk
 
 st.set_page_config(page_title="Football Atlas — Fitness & Rotation", page_icon="🩺", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("🩺 Fitness & Rotation")
 st.caption(
@@ -80,10 +64,7 @@ if result.n_low_confidence:
 
 st.divider()
 
-# ── AvailabilityScore vs InjuryRiskScore scatter — these measure related
-# but distinct things (see injury_predictor.py docstring: AvailabilityScore
-# is already inside DSSScore; InjuryRiskScore adds age + injury-type
-# context on top, purely advisory) ─────────────────────────────────────
+# ── AvailabilityScore vs InjuryRiskScore scatter ─────────────────────────
 left, right = st.columns([3, 2])
 
 with left:

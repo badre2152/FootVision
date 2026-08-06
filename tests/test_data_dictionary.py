@@ -1,12 +1,3 @@
-# tests/test_data_dictionary.py
-#
-# Regression tests for 25_changelog_data_dictionary.md.
-#
-# Covers the pure classification helpers directly (no I/O), plus an
-# end-to-end run of main() against a small synthetic gold/players_scored
-# CSV in a tmp_path — never touches the real gold/ directory or the real
-# docs/data_dictionary.md.
-
 import os
 import sys
 import re
@@ -19,10 +10,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import scripts.generate_data_dictionary as gdd
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# classify_source
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestClassifySource:
     def test_exact_match_takes_priority(self):
@@ -42,8 +29,6 @@ class TestClassifySource:
         assert "goalkeeper" not in source.lower()
 
     def test_norm_suffix_classified_as_gold_pipeline_when_no_other_match(self):
-        # A column with no recognizable prefix but a _norm suffix should
-        # still resolve confidently to "Gold pipeline (derived)".
         source, confident = gdd.classify_source("some_unknown_col_norm")
         assert confident is True
         assert "gold pipeline" in source.lower()
@@ -54,20 +39,12 @@ class TestClassifySource:
         assert "unclear" in source.lower()
 
     def test_all_prefix_map_entries_are_distinguishable(self):
-        # Sanity check on the map itself: no prefix should be a strict
-        # prefix of an earlier, shorter entry in a way that would make the
-        # longer one unreachable (e.g. "fbref_" before "fbref_gk_" would
-        # silently swallow all fbref_gk_* columns as generic fbref_).
         prefixes = [p for p, _ in gdd.PREFIX_SOURCE_MAP]
         for i, p in enumerate(prefixes):
             for other in prefixes[i + 1:]:
                 if other.startswith(p):
                     pytest.fail(f"'{p}' (listed before '{other}') would shadow it")
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# classify_raw_or_derived
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestClassifyRawOrDerived:
     def test_norm_suffix_is_derived(self):
@@ -77,7 +54,6 @@ class TestClassifyRawOrDerived:
         assert "derived" in gdd.classify_raw_or_derived("DSSScore")
 
     def test_composite_weight_key_is_derived(self):
-        # Every key of config.COMPOSITE_WEIGHTS must resolve to derived.
         for col in gdd.config.COMPOSITE_WEIGHTS:
             assert "derived" in gdd.classify_raw_or_derived(col), col
 
@@ -85,23 +61,14 @@ class TestClassifyRawOrDerived:
         assert gdd.classify_raw_or_derived("fbref_goals_per90") == "raw"
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# humanize_column_name
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestHumanizeColumnName:
     def test_underscores_become_spaces(self):
         assert gdd.humanize_column_name("fbref_goals_per90") == "Fbref goals per90"
 
     def test_camel_case_gets_split(self):
         result = gdd.humanize_column_name("PlayerDNA")
-        assert " " in result  # "Player DNA" or similar, not run together
+        assert " " in result
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# find_used_in — whole-word matching (the "Gls_per90 vs Gls_per90_norm"
-# false-positive this function must avoid)
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestFindUsedIn:
     def test_finds_exact_column_reference(self):
@@ -110,8 +77,6 @@ class TestFindUsedIn:
         assert "foo.py" in result
 
     def test_does_not_false_positive_on_longer_column_containing_it(self):
-        # A file that ONLY references Gls_per90_norm must not be reported
-        # as using Gls_per90.
         index = {"foo.py": 'df["Gls_per90_norm"] = 1'}
         result = gdd.find_used_in("Gls_per90", index)
         assert "foo.py" not in result
@@ -129,15 +94,9 @@ class TestFindUsedIn:
         assert result.count("`file") == 3
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# End-to-end: main() against a small synthetic gold/ CSV
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestEndToEnd:
     @pytest.fixture
     def fake_project(self, tmp_path, monkeypatch):
-        """Builds a minimal fake project root with a gold/ CSV, points the
-        module's PROJECT_ROOT/OUTPUT_PATH at it, and restores afterwards."""
         gold_dir = tmp_path / "gold"
         gold_dir.mkdir()
         docs_dir = tmp_path / "docs"
@@ -171,15 +130,12 @@ class TestEndToEnd:
         tmp_path, output_path = fake_project
         gdd.main()
         text = output_path.read_text(encoding="utf-8")
-        # fbref_goals_per90 has 2/3 non-null values in the fixture above.
         assert "2/3 (66.7%)" in text
 
     def test_unrecognized_column_flagged_in_output(self, fake_project):
         tmp_path, output_path = fake_project
         gdd.main()
         text = output_path.read_text(encoding="utf-8")
-        # Find the row for the deliberately-unrecognizable column and
-        # confirm it's flagged, not silently given a confident-looking entry.
         row_match = re.search(r"\| `totally_unrecognized_xyz`.*\|", text)
         assert row_match is not None
         assert "unclear" in row_match.group(0) or "manual review" in row_match.group(0)

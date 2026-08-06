@@ -1,12 +1,3 @@
-# dashboard/pages/10_setpiece_clutch.py
-# Football Atlas — Set Piece & Clutch page
-#
-# Added 2026-07-30. Only the "Pressure Index" third of the original
-# PROJECT.md spec is here — see analytics/set_piece_analyzer.py's
-# docstring for exactly why "90+ minutes performance" and "set-piece
-# specialists" aren't (no minute-level events, no set-piece tagging,
-# anywhere in this project's data).
-
 import sys
 from pathlib import Path
 
@@ -22,7 +13,7 @@ from dashboard.report_utils import csv_download_button
 from analytics.performance.set_piece_analyzer import clutch_ranking
 
 st.set_page_config(page_title="Football Atlas — Set Piece & Clutch", page_icon="🎯", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("🎯 Set Piece & Clutch")
 st.caption(

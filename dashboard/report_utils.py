@@ -1,31 +1,3 @@
-# dashboard/report_utils.py
-# Football Atlas — Report / Export utilities (spec #12)
-#
-# Re-integrated 2026-08-01 on top of the localization (#15) and coach-notes
-# (#20) work that landed after this module was first written — it had gone
-# missing from a later delivered archive (see CHANGELOG.md's own warning
-# about this exact "fixes keep disappearing" pattern; this file is the
-# same failure mode happening to a different feature).
-#
-# Shared by every dashboard page that offers a CSV download, and by
-# 4_final_squad.py / 2_player_analysis.py for PDF generation. Kept as a
-# separate, mostly-Streamlit-light module (only `st.download_button`
-# touches Streamlit directly) so the PDF-building functions stay
-# unit-testable on their own, matching dashboard/data_loader.py's convention.
-#
-# PDF engine: reportlab (per spec #12's own recommendation over weasyprint
-# — no external system/binary dependency, more portable).
-#
-# LANGUAGE SCOPE (deliberate, see dashboard/i18n.py's "export.pdf_lang_note"
-# string shown next to the PDF buttons): the on-screen button LABELS follow
-# the sidebar EN/FR/AR switcher via t(), but the generated PDF CONTENT is
-# always English. reportlab's built-in Helvetica/base-14 fonts do not
-# contain Arabic glyphs, and Arabic PDF text needs shaping (arabic_reshaper
-# + python-bidi) plus a bundled Unicode font — none of which are dependencies
-# this project has today. Silently emitting broken/garbled Arabic PDF text
-# would be worse than being explicit about the gap, so this stays a named
-# scope decision, not a hidden limitation.
-
 from __future__ import annotations
 
 import io
@@ -45,7 +17,6 @@ from reportlab.graphics.shapes import Drawing, Rect
 
 from dashboard.i18n import t
 
-# ── CSV export ────────────────────────────────────────────────────────────
 
 def csv_download_button(
     df: pd.DataFrame,
@@ -54,14 +25,6 @@ def csv_download_button(
     key: str,
     label: str | None = None,
 ) -> None:
-    """
-    Drops a `st.download_button` for the given (already filtered/sorted) df.
-    `key` must be unique per button on a page.
-
-    `label` defaults to the localized "export.csv_button" string (follows
-    the sidebar language switcher) — pass an explicit label only if a page
-    needs page-specific wording.
-    """
     if df is None or df.empty:
         return
     csv_bytes = df.to_csv(index=False).encode("utf-8")
@@ -74,10 +37,6 @@ def csv_download_button(
         key=key,
     )
 
-
-# ── Shared justification logic (English — see module docstring for why the
-#    PDF stays English-only regardless of UI language; 4_final_squad.py's
-#    own on-screen _justification() already goes through t() separately) ──
 
 LABEL_MAP = {
     "PerformanceScore": "on-pitch output", "FormScore": "recent form",
@@ -92,24 +51,11 @@ POSITION_LABELS = {"GK": "Goalkeepers", "DEF": "Defenders", "MID": "Midfielders"
 
 
 def justification_line(row, component_cols: list[str]) -> str:
-    """
-    Picks the player's single strongest sub-score as a one-line justification
-    (English, for the PDF — see 4_final_squad.py for the localized on-screen
-    equivalent, which has its own t()-based label map).
-
-    NOTE (see spec #12): analytics/ml/selection_classifier.py only produces
-    AGGREGATE, feature-level coefficients (`standardized_coefficients`) from
-    its LOOCV logistic regression — there is no per-player explainable
-    output in that module to draw from. This heuristic is the best available
-    per-player justification.
-    """
     if not component_cols:
         return f"DSSScore {row['DSSScore']:.3f}"
     best_col = max(component_cols, key=lambda c: row[c])
     return f"Strongest in {LABEL_MAP.get(best_col, best_col)} ({row[best_col]:.2f})"
 
-
-# ── PDF: Final Squad Report ───────────────────────────────────────────────
 
 def build_final_squad_pdf(
     top26: pd.DataFrame,
@@ -118,14 +64,6 @@ def build_final_squad_pdf(
     source_file: str | None = None,
     filters_applied: bool = False,
 ) -> bytes:
-    """
-    Builds the "Final Squad Report" PDF: 26 players grouped by position,
-    key DSSScore, and a one-line justification per player.
-
-    `top26` should already be whatever the caller wants reflected in the
-    PDF (full squad, or sidebar-filtered — see the `filters_applied` flag,
-    rendered on the cover so scope is never ambiguous).
-    """
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
@@ -191,20 +129,7 @@ def build_final_squad_pdf(
     return buf.getvalue()
 
 
-# ── PDF: Per-player profile (optional, spec #12 §3) ───────────────────────
-
 def build_player_profile_pdf(row, component_cols: list[str], *, note_text: str | None = None) -> bytes:
-    """
-    One-page PDF profile for a single player: header metrics + a simple
-    horizontal bar breakdown of sub-scores (drawn directly with reportlab
-    shapes rather than exporting the on-screen Plotly radar chart, which
-    would need the `kaleido` dependency — keeps the PDF feature to the
-    single new dependency, reportlab).
-
-    `note_text`: optional current Coach/Staff Note (spec #20,
-    dashboard/notes_store.py) to include on the profile — pass
-    `get_note(player_id)["text"]` if a note exists, otherwise leave None.
-    """
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,

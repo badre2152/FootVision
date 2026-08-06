@@ -1,15 +1,3 @@
-#!/usr/bin/env python
-# run_sd_extractor.py — SofaScore Detail Extractor
-#
-# Reads sofascore_detail/ from MinIO Bronze,
-# extracts sd_* columns (Gls/Ast/xG/xA/Tkl/Int/Clr per90),
-# uploads to football-bronze/sofascore_detail_extracted/
-#
-# Run AFTER run_bronze.py, BEFORE run_silver.py:
-#   python run_sd_extractor.py              # all 49 players
-#   python run_sd_extractor.py --limit 5   # first 5 players (test)
-#   python run_sd_extractor.py --limit 1   # single player (quick check)
-
 import argparse
 import json
 import logging
@@ -64,7 +52,6 @@ def main():
     from clients.minio_client import read_latest_json, upload_json
     from ingestion.loaders.sofascore.detail_extractor import extract_player
 
-    # Read latest sofascore_detail from MinIO
     raw = read_latest_json(bucket="football-bronze", prefix="sofascore_detail/")
     if not raw:
         logger.error("No sofascore_detail data found in MinIO — run run_bronze.py first.")
@@ -72,12 +59,10 @@ def main():
 
     logger.info("Loaded %d records from sofascore_detail/", len(raw))
 
-    # Apply limit BEFORE extraction
     if args.limit:
         raw = raw[:args.limit]
         logger.info("Limiting to first %d players", args.limit)
 
-    # Extract — one player at a time
     results = []
     ok = skipped = 0
 
@@ -116,7 +101,6 @@ def main():
         ok, len(results), skipped,
     )
 
-    # Coverage summary
     logger.info("COVERAGE:")
     cols = [
         ("sd_gls_per90",   "Gls/90"),
@@ -134,14 +118,12 @@ def main():
         bar = "█" * n + "░" * (len(results) - n)
         logger.info("  %-22s %s %d/%d  [%s]", col, bar[:15], n, len(results), label)
 
-    # Upload to MinIO
     if args.dry_run:
         logger.info("DRY RUN — skipping MinIO upload.")
         logger.info("Sample output (first player):")
         logger.info(json.dumps(results[0], indent=2, ensure_ascii=False))
         return
 
-    # FIX: upload_json takes object_name (full path), not prefix + filename separately
     object_name = f"sofascore_detail_extracted/players_sd_extracted_{run_date}.json"
     upload_json(
         bucket="football-bronze",

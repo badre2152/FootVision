@@ -1,7 +1,3 @@
-# clients/minio_client.py
-# Auto-selects real MinIO or local filesystem mock based on MINIO_MOCK env var.
-# Set MINIO_MOCK=1 for local dev without a running MinIO server.
-
 import json
 import logging
 import os

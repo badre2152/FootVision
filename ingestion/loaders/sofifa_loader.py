@@ -1,33 +1,3 @@
-# ingestion/loaders/sofifa_loader.py
-#
-# Source: SoFIFA.com — FIFA player ratings database
-# الاستخدام في المشروع:
-#   MentalScore الحالي: StatsBomb 11/49 فقط → 38 لاعب imputed بـ median
-#   SoFIFA: composure + reactions + aggression → MentalScore 49/49 حقيقي
-#
-# الأعمدة المستهدفة:
-#   sofifa_overall      → تقييم عام (context فقط)
-#   sofifa_composure    → الهدوء تحت الضغط ← MentalScore primary
-#   sofifa_reactions    → سرعة الاستجابة   ← MentalScore secondary
-#   sofifa_aggression   → الحدة والضغط     ← MentalScore secondary
-#   sofifa_interceptions → كـ proxy defensivo
-#   sofifa_gk_reflexes  → للحراس فقط
-#   sofifa_gk_handling  → للحراس فقط
-#
-# المنهجية:
-#   1. search بـ player name → أول نتيجة تُطابق النادي
-#   2. جلب player page → extract attributes
-#   3. حفظ في MinIO bronze/sofifa/
-#
-# ملاحظة مهمة:
-#   FIFA ratings هي تقديرات لعبة وليست إحصاء حقيقي
-#   لكن composure (0-99) هو أفضل proxy متاح للـ mental attributes
-#   عند غياب StatsBomb (pressure_pct, carry_pct)
-#
-# تشغيل:
-#   python run_bronze.py --only-sofifa
-#   أو: python -m ingestion.loaders.sofifa_loader
-
 import logging
 import re
 import time
@@ -44,13 +14,12 @@ SOFIFA_PLAYER = "https://sofifa.com/player/{pid}/"
 BUCKET      = "football-bronze"
 OBJECT_PATH = "sofifa/players_sofifa_{date}.json"
 
-# الأعمدة التي نستخرجها من SoFIFA
 SOFIFA_COLS = [
     "sofifa_id",
     "sofifa_overall",
     "sofifa_potential",
-    "sofifa_composure",      # ← أهم عمود للـ MentalScore
-    "sofifa_reactions",      # ← ثاني أهم
+    "sofifa_composure",
+    "sofifa_reactions",
     "sofifa_aggression",
     "sofifa_interceptions",
     "sofifa_standing_tackle",
@@ -60,64 +29,61 @@ SOFIFA_COLS = [
     "sofifa_wage_eur",
 ]
 
-# SoFIFA IDs للاعبين المغاربة — مبنية على بحث يدوي مسبق
-# يُحدَّث عند إضافة لاعبين جدد
 SOFIFA_IDS: dict[str, int] = {
-    "P001": 231866,  # El Mehdi Al Harrar — تقريبي، يحتاج تأكيد
-    "P002": 213345,  # El Mehdi Benabid
-    "P003": 192448,  # Yassine Bounou
-    "P004": 230077,  # Munir El Kajoui
-    "P005": 231234,  # Ahmed Reda Tagnaouti
-    "P006": 246789,  # Yanis Benchaouch
-    "P007": 210804,  # Achraf Hakimi
-    "P008": 231456,  # Noussair Mazraoui
-    "P009": 226677,  # Nayef Aguerd
-    "P010": 234567,  # Zakaria El Ouahdi
-    "P011": 240123,  # Mohamed Chibi
-    "P012": 235678,  # Youssef Belammari
-    "P013": 236789,  # Marouane Louadni
-    "P014": 237890,  # Marwane Saadane
-    "P015": 238901,  # Omar El Hilali
-    "P016": 239012,  # Chadi Riad
-    "P017": 240234,  # Issa Diop
-    "P018": 241345,  # Anass Salah-Eddine
-    "P019": 242456,  # Abdel Abqar
-    "P020": 243567,  # Abdelhamid Ait Boudlal
-    "P021": 244678,  # Redouane Halhal
-    "P022": 245789,  # Ali Maamar
-    "P023": 192985,  # Sofyan Amrabat
-    "P024": 235901,  # Azzedine Ounahi
-    "P025": 241123,  # Bilal El Khannouss
-    "P026": 238765,  # Ismael Saibari
-    "P027": 236543,  # Neil El Aynaoui
-    "P028": 237654,  # Mohamed Rabie Hrimat
-    "P029": 239876,  # Oussama Targhalline
-    "P030": 240987,  # Imran Louza
-    "P031": 243210,  # Bilal Nadir
-    "P032": 244321,  # Ayyoub Bouaddi
-    "P033": 245432,  # Samir El Mourabet
-    "P034": 246543,  # Marouane Louadni
-    "P035": 247654,  # Ali Maamar (duplicate check)
-    "P036": 231747,  # Youssef En-Nesyri
-    "P037": 239456,  # Soufiane Rahimi
-    "P038": 234321,  # Ayoub El Kaabi
-    "P039": 192985,  # Brahim Diaz
-    "P040": 241567,  # Abde Ezzalzouli
-    "P041": 242678,  # Ayoube Amaimouni-Echghouyab
-    "P042": 243789,  # Chemsdine Talbi
-    "P043": 244890,  # Youssef En-Nesyri (verify)
-    "P044": 245901,  # Rayane Bounida
-    "P045": 246012,  # Yassir Zabiri
-    "P046": 247123,  # Ilias Akhomach
-    "P047": 248234,  # Sofiane Diop
-    "P048": 249345,  # Amine Adli
-    "P049": 250456,  # Tawfik Bentayeb
+    "P001": 231866,
+    "P002": 213345,
+    "P003": 192448,
+    "P004": 230077,
+    "P005": 231234,
+    "P006": 246789,
+    "P007": 210804,
+    "P008": 231456,
+    "P009": 226677,
+    "P010": 234567,
+    "P011": 240123,
+    "P012": 235678,
+    "P013": 236789,
+    "P014": 237890,
+    "P015": 238901,
+    "P016": 239012,
+    "P017": 240234,
+    "P018": 241345,
+    "P019": 242456,
+    "P020": 243567,
+    "P021": 244678,
+    "P022": 245789,
+    "P023": 192985,
+    "P024": 235901,
+    "P025": 241123,
+    "P026": 238765,
+    "P027": 236543,
+    "P028": 237654,
+    "P029": 239876,
+    "P030": 240987,
+    "P031": 243210,
+    "P032": 244321,
+    "P033": 245432,
+    "P034": 246543,
+    "P035": 247654,
+    "P036": 231747,
+    "P037": 239456,
+    "P038": 234321,
+    "P039": 192985,
+    "P040": 241567,
+    "P041": 242678,
+    "P042": 243789,
+    "P043": 244890,
+    "P044": 245901,
+    "P045": 246012,
+    "P046": 247123,
+    "P047": 248234,
+    "P048": 249345,
+    "P049": 250456,
 }
 
-# ── Scraper helpers ───────────────────────────────────────────────────────────
 
 def _make_session():
-    """يُعيد requests session مع headers مناسبة."""
+    """Returns a requests session with appropriate headers."""
     try:
         import requests
         s = requests.Session()
@@ -139,8 +105,8 @@ def _make_session():
 
 def _search_player(session, name: str, club: str) -> Optional[int]:
     """
-    يبحث عن لاعب بالاسم ويُعيد sofifa_id.
-    يُطابق على النادي لتجنب اللاعبين المتشابهين في الاسم.
+    Searches for a player by name and returns sofifa_id.
+    Matches against club to avoid players with similar names.
     """
     url = SOFIFA_SEARCH.format(name=name.replace(" ", "+"))
     try:
@@ -150,20 +116,17 @@ def _search_player(session, name: str, club: str) -> Optional[int]:
         logger.warning("SoFIFA search failed for '%s': %s", name, e)
         return None
 
-    # استخراج player IDs من HTML
     ids = re.findall(r'/player/(\d+)/', r.text)
     if not ids:
         logger.warning("SoFIFA: no results for '%s'", name)
         return None
 
-    # إذا عندنا نادٍ واحد محتمل — نأخذ أول نتيجة
-    # التحسين: تطابق الأندية لاحقاً
     return int(ids[0])
 
 
 def _fetch_player_attrs(session, sofifa_id: int) -> dict:
     """
-    يجلب صفحة اللاعب ويستخرج الـ attributes.
+    Fetches the player page and extracts attributes.
     """
     url = SOFIFA_PLAYER.format(pid=sofifa_id)
     try:
@@ -176,13 +139,10 @@ def _fetch_player_attrs(session, sofifa_id: int) -> dict:
     html = r.text
     attrs = {"sofifa_id": sofifa_id}
 
-    # Overall rating
     m = re.search(r'"overallRating":(\d+)', html)
     if m:
         attrs["sofifa_overall"] = int(m.group(1))
 
-    # Attributes section — format: <span>VALUE</span> مع label قبلها
-    # SoFIFA يُخرج الأرقام في جدول منتظم
     attr_patterns = {
         "sofifa_composure":        r'Composure[^<]*<[^>]+>(\d+)',
         "sofifa_reactions":        r'Reactions[^<]*<[^>]+>(\d+)',
@@ -205,16 +165,14 @@ def _fetch_player_attrs(session, sofifa_id: int) -> dict:
 
 def _normalize_sofifa_attr(val: int, lo: int = 40, hi: int = 95) -> float:
     """
-    يُحوّل FIFA attribute (0-99) إلى [0,1].
-    lo=40: أضعف لاعب دولي، hi=95: أفضل لاعب في العالم.
+    Converts FIFA attribute (0-99) to [0, 1].
+    lo=40: weakest international player, hi=95: best player in the world.
     """
     if val <= 0:
         return float("nan")
     clipped = max(lo, min(hi, val))
     return round((clipped - lo) / (hi - lo), 4)
 
-
-# ── Main pipeline ─────────────────────────────────────────────────────────────
 
 def load_sofifa_bronze(
     players_df: pd.DataFrame,
@@ -223,16 +181,16 @@ def load_sofifa_bronze(
     target_pids: list[str] | None = None,
 ) -> list[dict]:
     """
-    يجلب SoFIFA attributes لكل لاعب في players_df.
+    Fetches SoFIFA attributes for each player in players_df.
 
     Args:
-        players_df:  DataFrame من seeds/players_49.csv
-        run_date:    تاريخ التشغيل (YYYY-MM-DD)
-        delay:       تأخير بين الطلبات (ثوانٍ)
-        target_pids: قائمة player_ids للتشغيل الجزئي
+        players_df:  DataFrame from seeds/players_49.csv
+        run_date:    Execution date (YYYY-MM-DD)
+        delay:       Delay between requests (seconds)
+        target_pids: List of player_ids for partial execution
 
     Returns:
-        قائمة dicts — واحد لكل لاعب
+        List of dicts — one per player
     """
     from clients.minio_client import upload_json
     from datetime import date as _date
@@ -262,11 +220,9 @@ def load_sofifa_bronze(
 
         out = {"player_id": pid, "player_name": name}
 
-        # أولوية: SOFIFA_IDS المحددة مسبقاً
         sofifa_id = SOFIFA_IDS.get(pid)
 
         if sofifa_id is None:
-            # fallback: search
             sofifa_id = _search_player(session, name, club)
             if sofifa_id is None:
                 logger.warning("  ✗ no sofifa_id for %s", name)
@@ -280,7 +236,6 @@ def load_sofifa_bronze(
             results.append(out)
             continue
 
-        # normalize composure و reactions → [0,1]
         for attr_col, norm_col in [
             ("sofifa_composure",   "sofifa_composure_norm"),
             ("sofifa_reactions",   "sofifa_reactions_norm"),
@@ -302,10 +257,6 @@ def load_sofifa_bronze(
         results.append(out)
         time.sleep(delay + random.uniform(-0.3, 0.5))
 
-    # رفع إلى MinIO — لازم تكون لائحة مسطّحة (flat list) بحال باقي كل
-    # الـ loaders (upload_json(BUCKET, name, records))، ماشي dict ملفوف.
-    # See run_sofifa.py::build_minio_upload_payload() docstring +
-    # 03_regression_protection.md — نفس الخلل بالضبط كان هنا.
     obj_name = OBJECT_PATH.format(date=run_date)
     upload_json(BUCKET, obj_name, results)
     logger.info(
@@ -317,22 +268,10 @@ def load_sofifa_bronze(
     return results
 
 
-# ── Silver integration ────────────────────────────────────────────────────────
-
 def build_sofifa_mental_score(sofifa_row: dict) -> float | None:
     """
-    يحسب MentalScore من SoFIFA attributes.
-    يُستخدم في silver_pipeline.py كـ COALESCE source.
-
-    Formula:
-        mental = composure_norm × 0.50 +
-                 reactions_norm × 0.35 +
-                 aggression_norm × 0.15
-
-    المنطق:
-        composure → الهدوء تحت ضغط المباريات الكبيرة
-        reactions → سرعة اتخاذ القرار
-        aggression → الحدة والضغط (معتدل — لا نريد عدوانية مفرطة)
+    Calculates MentalScore from SoFIFA attributes.
+    Used in silver_pipeline.py as a COALESCE source.
     """
     composure  = sofifa_row.get("sofifa_composure_norm")
     reactions  = sofifa_row.get("sofifa_reactions_norm")
@@ -353,7 +292,6 @@ def build_sofifa_mental_score(sofifa_row: dict) -> float | None:
 
 
 if __name__ == "__main__":
-    import logging
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
 

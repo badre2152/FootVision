@@ -1,51 +1,3 @@
-# analytics/competition_context.py
-# Best XI Generator (formation-based) — the buildable half of PROJECT.md's
-# original "competition_context.py" spec.
-#
-# Added 2026-07-30.
-#
-# ─────────────────────────────────────────────────────────────────────────
-# WHAT'S NOT HERE, AND WHY (read this before reporting a "missing feature")
-# ─────────────────────────────────────────────────────────────────────────
-# PROJECT.md's original spec for this file was two things bundled together:
-#   1. "Analyser le style de jeu des adversaires du groupe" +
-#      "Calculer Tactical Fit Score vs chaque adversaire"  -> requires an
-#      OPPONENT data source (formations, pressing stats, style profiles for
-#      Morocco's actual World Cup opponents). Checked exhaustively across
-#      this codebase (grep for opponent/adversaire/fixture across every
-#      .py file, every Bronze loader, the seeds/players_49.csv header) —
-#      there is NO such source anywhere. Nothing in ingestion/loaders/
-#      collects opponent-team data; the entire Bronze layer is
-#      candidate-player-centric (11+ sources, all about the 49 Morocco
-#      candidates themselves, never about Croatia/Netherlands/whoever).
-#      Building "Tactical Fit vs Opponent" honestly would mean designing
-#      and shipping a brand-new Bronze ingestion pipeline first (opponent
-#      squad lists, formations, pressing/possession stats per opponent) —
-#      that is a separate, much larger piece of work, not something this
-#      module can fake with data that doesn't exist. See
-#      tactical_fit_vs_opponent() below — it exists as a named stub that
-#      raises NotImplementedError with this same explanation, specifically
-#      so this gap is visible and documented rather than silently absent.
-#   2. "Générer Best XI vs chaque adversaire" -> the "vs chaque adversaire"
-#      half needs (1), but a plain "Best XI by formation" from the
-#      candidates you've already selected and scored does NOT need any
-#      opponent data at all. That's what this module actually builds.
-#
-# ─────────────────────────────────────────────────────────────────────────
-# A REAL SIMPLIFICATION WORTH FLAGGING: NO SUB-POSITIONS
-# ─────────────────────────────────────────────────────────────────────────
-# seeds/players_49.csv's `position` column only has 4 values: GK, DEF, MID,
-# FWD — no CB/FB/DM/CM/AM/LW/RW/ST granularity. That means, for example,
-# "4-2-3-1" and "4-3-3" both resolve to the exact same slot counts here
-# (4 DEF, 5 MID, 1 FWD is NOT distinguishable from "2 DM + 3 AM" without
-# finer position data — this module treats all central/wide midfielders as
-# one interchangeable MID pool). Formation names below are a genuine
-# simplification for slot-counting purposes, not a tactically accurate
-# board — do not present this as "the AM slot is empty" or similar,
-# because this module has no concept of AM at all.
-
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 
@@ -53,16 +5,12 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Formation -> required outfield slot counts (GK is always exactly 1,
-# added separately below, not counted in these dicts).
-# Counts intentionally only use {DEF, MID, FWD} — see module docstring on
-# why finer roles (wing-back, DM, AM, winger...) aren't modeled.
 FORMATIONS: dict[str, dict[str, int]] = {
     "4-3-3":     {"DEF": 4, "MID": 3, "FWD": 3},
-    "4-2-3-1":   {"DEF": 4, "MID": 5, "FWD": 1},  # identical slot counts to 4-3-3-ish MID-heavy shapes — see note above
+    "4-2-3-1":   {"DEF": 4, "MID": 5, "FWD": 1},
     "4-4-2":     {"DEF": 4, "MID": 4, "FWD": 2},
     "3-5-2":     {"DEF": 3, "MID": 5, "FWD": 2},
-    "5-3-2":     {"DEF": 5, "MID": 3, "FWD": 2},  # wing-backs counted as DEF here — simplification
+    "5-3-2":     {"DEF": 5, "MID": 3, "FWD": 2},
 }
 
 REQUIRED_COLUMNS = ["player_name", "position", "DSSScore"]
@@ -72,12 +20,8 @@ def _resolve_id_col(df: pd.DataFrame, id_col: str | None) -> str:
     """
     Picks the column to use as a unique player identifier.
 
-    gold/players_scored_*.csv has `player_id` (see MASTER_SPEC.md § 9), but
-    gold/top26_*.csv deliberately does NOT (it's a "key columns only"
-    export — see MASTER_SPEC.md's Gold Outputs table) — found this the
-    hard way by running this module against a real top26_*.csv file, not
-    by reading the spec. Falls back to `player_name` with a warning if
-    `player_id` isn't present; raises if neither is.
+    Falls back to `player_name` with a warning if `player_id` isn't
+    present; raises if neither is.
     """
     if id_col is not None:
         if id_col not in df.columns:
@@ -87,8 +31,7 @@ def _resolve_id_col(df: pd.DataFrame, id_col: str | None) -> str:
         return "player_id"
     if "player_name" in df.columns:
         logger.warning(
-            "candidate_pool has no 'player_id' column (this is expected for "
-            "gold/top26_*.csv, which doesn't include it) — falling back to "
+            "candidate_pool has no 'player_id' column — falling back to "
             "'player_name' as the unique identifier. This is fine unless two "
             "candidates share an exact name."
         )
@@ -99,11 +42,11 @@ def _resolve_id_col(df: pd.DataFrame, id_col: str | None) -> str:
 @dataclass
 class BestXIResult:
     formation: str
-    starting_xi: pd.DataFrame          # 11 rows: GK + formation's outfield slots
-    bench: pd.DataFrame                # remaining candidates, sorted by DSSScore within position
-    shortfalls: dict[str, int] = field(default_factory=dict)  # position -> how many short, if any
+    starting_xi: pd.DataFrame
+    bench: pd.DataFrame
+    shortfalls: dict[str, int] = field(default_factory=dict)
     pool_size: int = 0
-    used_fallback_pool: bool = False   # True if candidate_pool didn't have enough depth and a wider pool was used
+    used_fallback_pool: bool = False
 
 
 def _pick_top_n(pool: pd.DataFrame, position: str, n: int) -> pd.DataFrame:
@@ -120,29 +63,22 @@ def build_best_xi(
 ) -> BestXIResult:
     """
     Selects a starting XI from `candidate_pool` for the given `formation`,
-    purely by DSSScore within each position bucket — no opponent context
-    (see module docstring for why).
+    purely by DSSScore within each position bucket.
 
     Args:
         candidate_pool: gold/top26_*.csv OR gold/players_scored_*.csv —
             must have REQUIRED_COLUMNS. Every row is assumed eligible/fit;
-            this function does no availability/injury filtering itself
-            (compose with analytics.ml.injury_predictor's InjuryRiskLevel
-            upstream if you want to exclude "High" risk players from
-            contention — deliberately NOT done automatically here, since
-            excluding a player from a *starting XI suggestion* is a
-            coaching decision, not something to hardcode silently).
+            this function does no availability/injury filtering itself.
         formation: one of FORMATIONS' keys.
         fallback_pool: a wider pool (e.g. the full 49 players_scored_*.csv)
             to draw from ONLY if candidate_pool doesn't have enough depth
             at some position for the chosen formation. If a fallback was
             needed, `used_fallback_pool=True`. If None (default) and depth
             is insufficient, the shortfall is reported in `shortfalls` and
-            those slots are left unfilled (fewer than 11 rows in
-            starting_xi) rather than silently picking bad-fit players.
+            those slots are left unfilled rather than picking bad-fit
+            players.
         id_col: column to use as unique player identifier. Defaults to
-            'player_id' if present, else falls back to 'player_name' (see
-            _resolve_id_col — top26_*.csv has no player_id column).
+            'player_id' if present, else falls back to 'player_name'.
 
     Returns:
         BestXIResult.
@@ -216,11 +152,7 @@ def compare_formations(
     """
     Runs build_best_xi() for every formation in `formations` (default: all
     of FORMATIONS) and returns a summary table: formation, total starting
-    XI DSSScore, mean DSSScore, any shortfalls. Useful for a dashboard
-    "which formation gets our best players on the pitch" comparison — NOT
-    a tactical recommendation (this module has no opponent or tactical
-    context, see docstring), purely "which shape best uses the squad
-    depth you actually have."
+    XI DSSScore, mean DSSScore, any shortfalls.
     """
     formations = formations or list(FORMATIONS)
     rows = []
@@ -238,20 +170,13 @@ def compare_formations(
 
 def tactical_fit_vs_opponent(*args, **kwargs):
     """
-    NOT IMPLEMENTED — see module docstring's "WHAT'S NOT HERE, AND WHY"
-    section. This exists as a named, documented stub (not a silent
-    omission) so anyone looking for opponent-specific tactical fit finds
-    a clear explanation instead of a missing file or a vague TODO.
-
-    Building this for real requires a new Bronze data source: opponent
-    squads, formations, and style/pressing metrics for Morocco's actual
-    World Cup opponents — none of which exists anywhere in this project's
-    ingestion layer today.
+    Not implemented — this project has no opponent-team data source
+    anywhere in Bronze/Silver. Building this requires a new ingestion
+    pipeline for opponent squads, formations, and style/pressing metrics.
     """
     raise NotImplementedError(
         "tactical_fit_vs_opponent() is intentionally not built — this project "
         "has no opponent-team data source anywhere in Bronze/Silver. Building "
-        "it honestly requires a new ingestion pipeline for opponent squads/"
-        "formations/style first. See this module's docstring for the full "
-        "explanation. This is a scoping decision, not a bug."
+        "it requires a new ingestion pipeline for opponent squads/formations/"
+        "style first. This is a scoping decision, not a bug."
     )

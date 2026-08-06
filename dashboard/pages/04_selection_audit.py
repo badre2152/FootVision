@@ -1,22 +1,5 @@
 # dashboard/pages/04_selection_audit.py
-# Football Atlas — Selection Audit page (NEW 2026-07-29)
-#
-# Visualizes the output of run_selection_audit.py: DSSScore's top-26 vs the
-# REAL 2026 World Cup squad (announced 2026-05-26 — see
-# analytics/ml/selection_classifier.py's module docstring for the full
-# story, including why this is a standalone script, not part of
-# run_gold.py).
-#
-# This page leads with the headline finding plainly, including when it's
-# bad news for the scoring formula (overlap statistically indistinguishable
-# from random) — that is the whole point of running a real-world audit, and
-# hiding or softening it here would defeat the purpose.
-#
-# Localized (issue #15) — fully translated, including the Plotly chart's
-# title/axis label, per the spec's requirement that chart labels not stay
-# English-only in a bilingual build. All static text goes through
-# dashboard/i18n.py's t() helper so it follows the sidebar language
-# switcher (EN/FR/AR).
+# Football Atlas — Selection Audit page
 
 import sys
 from pathlib import Path
@@ -35,7 +18,7 @@ from dashboard.report_utils import csv_download_button
 from dashboard.components import post_hoc_banner
 
 st.set_page_config(page_title="Football Atlas — Selection Audit", page_icon="🔍", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title(t("nav.selection_audit_title"))
 
@@ -44,11 +27,6 @@ if audit_data is None:
     st.warning(t("audit.no_data_warning"))
     st.stop()
 
-# This page audits DSSScore's top-26 against the REAL announced World Cup
-# squad (2026-05-26) — information that was not knowable as of
-# config.DECISION_DATE. Same treatment as the real-opponent-result section
-# of dashboard/pages/08_competition.py (post_hoc_banner() itself,
-# spec "05_dashboard_decision_vs_audit_labeling.md").
 post_hoc_banner()
 
 st.caption(t(
@@ -132,7 +110,7 @@ if "loocv_classifier" in audit_data:
     st.plotly_chart(fig, width='stretch')
     st.caption(t("audit.loocv_footer_caption"))
 
-# ── Injury Risk Index (transparent, rule-based — NOT a trained model) ────
+# ── Injury Risk Index (transparent, rule-based) ──────────────────────────
 injury_data = load_latest_injury_predictor()
 if injury_data is not None:
     st.divider()

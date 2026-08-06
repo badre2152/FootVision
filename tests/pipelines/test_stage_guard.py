@@ -1,8 +1,3 @@
-# tests/pipelines/test_stage_guard.py
-#
-# Unit tests for pipelines/_stage_guard.py (C3 in the architecture review).
-# Pure logic — no DataFrame, no Silver/Bronze, no mocking needed.
-
 import os
 import sys
 
@@ -29,11 +24,6 @@ class TestStageGuard:
         assert guard.has_run("b")
 
     def test_raises_when_dependency_has_not_run(self):
-        """
-        THE regression test this exists for: this is exactly the shape of
-        BUG-01 — calling a stage before its dependency must fail loudly,
-        not silently produce a value.
-        """
         guard = StageGuard()
         with pytest.raises(AssertionError, match=r"minutes_filter"):
             guard.run("dss_gate", lambda x: x, 1, depends_on=("minutes_filter",))
@@ -50,11 +40,6 @@ class TestStageGuard:
             guard.run("dss_gate", lambda x: x, 1, depends_on=("minutes_filter", "final_score"))
 
     def test_reordering_two_real_stages_is_caught(self):
-        """
-        Directly simulates the BUG-01 scenario: two stages, B depends on A,
-        called in the WRONG order (B before A). Must raise, not silently
-        return a wrong-but-plausible value.
-        """
         guard = StageGuard()
         calls = []
 
@@ -66,13 +51,11 @@ class TestStageGuard:
             calls.append("b")
             return df + ["b_ran"]
 
-        # Correct order — should work fine.
         df = []
         df = guard.run("a", stage_a, df)
         df = guard.run("b", stage_b, df, depends_on=("a",))
         assert df == ["a_ran", "b_ran"]
 
-        # Wrong order — B before A — must raise.
         guard2 = StageGuard()
         with pytest.raises(AssertionError):
             guard2.run("b", stage_b, [], depends_on=("a",))

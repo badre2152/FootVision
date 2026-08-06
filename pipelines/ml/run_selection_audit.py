@@ -1,19 +1,3 @@
-#!/usr/bin/env python
-# run_selection_audit.py — Football DSS ML Layer — Selection Audit
-#
-# Deliberately NOT wired into run_gold.py (unlike Player DNA). Reasons:
-#   1. REAL_SQUAD_2026 is one specific historical fact (2026-05-26
-#      announcement) tied to a moment in time, not something that should
-#      silently recompute inside every routine `python run_gold.py` run.
-#   2. This is a validation/audit exercise against the ONE real-world data
-#      point this project has ever had — it belongs as an explicit,
-#      deliberate step the user runs and reads, not a background column.
-#
-# Run AFTER run_gold.py:
-#   python run_selection_audit.py
-#   python run_selection_audit.py --input gold/players_scored_20260727_112534.csv
-#   python run_selection_audit.py --top-n 26 --no-classifier
-
 import argparse
 import json
 import glob

@@ -1,24 +1,3 @@
-# tests/test_gold2_components.py
-#
-# Test suite for the 2026-07-14 session's work:
-#   - ChemistryScore, PressureIndex, FlexibilityScore (new components)
-#   - percentile_score.py wiring (rank-preservation contract)
-#   - minutes_filter.py weight-key regression (the w.get() dead-key bug)
-#   - build_squad_summary() position-cap regression (the 5-GK bug)
-#   - COMPOSITE_WEIGHTS sums to 1.00
-#
-# These are UNIT tests against small synthetic DataFrames — no network,
-# no MinIO, no real Bronze/Silver run required. They test the SCORING
-# MATH and the REGRESSION-PRONE WIRING, not the scrapers themselves.
-#
-# NOTE ON FlexibilityScore: these tests cover the scoring module's math
-# (analytics/scoring/flexibility_score.py), which IS verified here. They
-# do NOT and CANNOT verify the upstream Transfermarkt secondary-position
-# selector (ingestion/loaders/transfermarkt_loader.py::
-# _extract_secondary_positions) actually matches live TM markup — that
-# requires a real network fetch, which this sandbox does not have. See
-# that module's docstring for the manual verification steps required.
-
 import sys
 import os
 import numpy as np
@@ -36,12 +15,7 @@ from analytics.scoring.performance_score import compute_final_score
 import config
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Fixtures
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _base_df(n=6):
-    """Minimal synthetic Silver-shaped DataFrame for testing sub-score modules."""
     positions = (["GK", "DEF", "DEF", "MID", "MID", "FWD"] * ((n // 6) + 1))[:n]
     return pd.DataFrame({
         "player_id":   [f"P{i:03d}" for i in range(n)],
@@ -52,12 +26,6 @@ def _base_df(n=6):
 
 
 def _fully_scored_df(n=6):
-    """
-    A DataFrame with every sub-score column compute_final_score() needs,
-    already populated with plausible values — used to test percentile
-    scoring, minutes_filter, and squad_summary without depending on the
-    full Silver->Gold pipeline running end to end.
-    """
     df = _base_df(n)
     rng = np.random.default_rng(42)
     for col in ["PerformanceScore", "FormScore", "MentalScore",
@@ -69,10 +37,6 @@ def _fully_scored_df(n=6):
     return df
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ChemistryScore
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestChemistryScore:
 
     def test_normalizes_within_bounds(self):
@@ -82,7 +46,6 @@ class TestChemistryScore:
         out = compute_chemistry_score(df)
         assert "ChemistryScore" in out.columns
         assert out["ChemistryScore"].between(0, 1).all()
-        # bounds are (0.0, 8.0) in config.py -> 8.0 should normalize to 1.0
         assert out.loc[out["chem_avg_per90"] == 8.0, "ChemistryScore"].iloc[0] == pytest.approx(1.0)
         assert out.loc[out["chem_avg_per90"] == 0.0, "ChemistryScore"].iloc[0] == pytest.approx(0.0)
 
@@ -93,16 +56,11 @@ class TestChemistryScore:
         assert out["ChemistryScore"].isna().all()
 
     def test_monotonic(self):
-        """Higher chem_avg_per90 must never produce a lower ChemistryScore."""
         df = _base_df()
         df["chem_avg_per90"] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         out = compute_chemistry_score(df).sort_values("chem_avg_per90")
         assert out["ChemistryScore"].is_monotonic_increasing
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PressureIndex
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestPressureIndex:
 
@@ -113,16 +71,10 @@ class TestPressureIndex:
         df["sb_xg_per90"] = [0.8, 0.1]
         df["xg_per90"]    = [0.2, 0.5]
         out = compute_pressure_index(df)
-        # player 0: performs ABOVE club level under pressure -> positive delta -> PressureIndex > 0.5 (midpoint)
         assert out.loc[0, "pressure_delta"] > 0
         assert out.loc[0, "PressureIndex"] > out.loc[1, "PressureIndex"]
 
     def test_gk_falls_back_to_global_median_not_crash(self):
-        """
-        GKs have no club xG by construction -> pressure_delta is always NaN
-        pre-imputation for GK. Must fall back to the GLOBAL median, not crash
-        or silently stay NaN forever.
-        """
         df = _base_df(n=3)
         df.loc[0, "position"] = "GK"
         df.loc[1, "position"] = "FWD"
@@ -139,10 +91,6 @@ class TestPressureIndex:
         assert out["PressureIndex"].isna().all()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# FlexibilityScore
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestFlexibilityScore:
 
     def test_more_positions_scores_higher(self):
@@ -152,12 +100,6 @@ class TestFlexibilityScore:
         assert out["FlexibilityScore"].is_monotonic_increasing
 
     def test_all_ones_produces_flat_zero_and_warns(self, caplog):
-        """
-        The expected failure mode if the (untested) upstream Transfermarkt
-        selector never matches: every player defaults to 1 position, and
-        this module must warn about it rather than silently produce a
-        misleadingly "normal-looking" score.
-        """
         df = _base_df(n=5)
         df["tm_num_positions"] = 1
         with caplog.at_level("WARNING"):
@@ -170,10 +112,6 @@ class TestFlexibilityScore:
         out = compute_flexibility_score(df)
         assert out["FlexibilityScore"].isna().all()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# percentile_score.py — rank-preservation contract (was orphaned code)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestPercentileScoring:
 
@@ -207,45 +145,17 @@ class TestPercentileScoring:
         assert summary["dss_range_percentile"] >= summary["dss_range_original"]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# minutes_filter.py — regression test for the w.get() dead-key bug
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestMinutesFilterWeightBinding:
 
     def test_dssscore_actually_reads_config_weights(self, monkeypatch):
-        """
-        REGRESSION TEST for the 2026-07-14 fix: apply_minutes_filter() used
-        to recompute DSSScore with COMPOSITE_WEIGHTS.get("performance", 0.35)
-        etc. — lowercase keys that never existed in COMPOSITE_WEIGHTS (real
-        keys are "PerformanceScore", "TacticalFitScore"...), so it silently
-        ALWAYS used the hardcoded defaults regardless of config.py.
-
-        UPDATED (2026-07-29): apply_minutes_filter() no longer computes
-        DSSScore at all — that duplicate/dead-key-bound computation was
-        removed entirely (see BUG: apply_dss_gate() ordering fix same day).
-        DSSScore is now computed exactly once, by compute_final_score()
-        (which already reads config.COMPOSITE_WEIGHTS correctly), and the
-        minutes-based gate is applied afterwards by apply_dss_gate(). This
-        test now exercises the full, correctly-ordered pipeline:
-            apply_minutes_filter() -> compute_final_score() -> apply_dss_gate()
-        and proves the ORIGINAL intent still holds end-to-end: mutating
-        COMPOSITE_WEIGHTS in config.py must actually change the final
-        DSSScore. If this test ever fails again, either the dead-key bug
-        regressed, or a new ordering bug (like the 2026-07-29 one, where
-        apply_dss_gate() ran before compute_final_score() and got its
-        result silently overwritten) was reintroduced.
-        """
         from analytics.scoring.minutes_filter import apply_dss_gate
 
         df = _fully_scored_df(n=5)
         df["inj_days_missed_2y"] = 0
-        df["fm_min"] = 900  # plenty of minutes -> ACTIVE, no availability penalty
+        df["fm_min"] = 900
 
         original_weights = dict(config.COMPOSITE_WEIGHTS)
 
-        # الترتيب الصحيح: minutes_filter (تصنيف) -> compute_final_score (DSSScore
-        # الوحيد) -> apply_dss_gate (البوابة). نفس الترتيب المستعمل فعلياً فـ run_gold.py
         df1 = apply_minutes_filter(df.copy())
         df1 = compute_final_score(df1)
         df1 = apply_dss_gate(df1)
@@ -254,20 +164,12 @@ class TestMinutesFilterWeightBinding:
             "compute_final_score() -> apply_dss_gate() must produce it exactly once."
         )
 
-        # Now drastically change ONE weight and confirm the output changes
         mutated_weights = dict(original_weights)
         mutated_weights["PerformanceScore"] = 0.999
         mutated_weights["FormScore"] = max(0.0001, 1 - sum(
             v for k, v in mutated_weights.items() if k != "FormScore"
         ))
-        # ملاحظة اكتُشفت أثناء هذا التحديث: compute_final_score() تستورد
-        # COMPOSITE_WEIGHTS على مستوى الملف (import علوي فـ performance_score.py)،
-        # ماشي جوّا الدالة كيما كانت apply_minutes_filter() القديمة. يعني
-        # monkeypatch.setattr(config, "COMPOSITE_WEIGHTS", ...) وحدها ماكافيتش
-        # — خاصنا نبدّل الاسم المربوط مباشرة فـ namespace performance_score.py.
-        # هذا فرق سلوك حقيقي (module-level import = قراءة مرة وحدة عند
-        # الimport، ماشي "قراءة حية" فـ كل استدعاء) يستاهل تحقق فـ الإنتاج،
-        # لكن ماشي bug جديد — التصميم كان هكذا أصلاً قبل هاذ الجلسة.
+
         monkeypatch.setattr(config, "COMPOSITE_WEIGHTS", mutated_weights)
         import analytics.scoring.performance_score as _perf_mod
         monkeypatch.setattr(_perf_mod, "COMPOSITE_WEIGHTS", mutated_weights)
@@ -282,12 +184,6 @@ class TestMinutesFilterWeightBinding:
             "longer being called / no longer reads config.py correctly."
         )
 
-        # BUG-01 ordering regression guard: apply_dss_gate() must run AFTER
-        # compute_final_score(), never before. If someone reorders the calls
-        # back to the 2026-07-29 broken order, apply_dss_gate() would gate a
-        # DSSScore that gets silently overwritten right after — this would
-        # NOT raise an exception, so we assert the gate's effect is actually
-        # visible in the final output instead.
         active_all = df.copy()
         active_all["active_2526"] = "yes"
         active_all["fm_min"] = 900
@@ -303,10 +199,6 @@ class TestMinutesFilterWeightBinding:
         )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# config.py sanity
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestCompositeWeights:
 
     def test_sums_to_one(self):
@@ -317,26 +209,10 @@ class TestCompositeWeights:
         )
 
     def test_flexibility_and_sentiment_status(self):
-        """
-        UPDATED 2026-07-22: both FlexibilityScore (added 2026-07-14) and
-        SentimentScore (added 2026-07-22, on top of new Reddit/YouTube/
-        NewsAPI collectors + analytics/nlp/sentiment_analyzer.py) are now
-        real components with real supporting infrastructure — this test
-        used to assert SentimentScore must NOT be present (deferred,
-        no infra existed). Updated now that the infra exists, per the
-        project owner's decision to build it in this session.
-        """
         assert "FlexibilityScore" in config.COMPOSITE_WEIGHTS
         assert "SentimentScore" in config.COMPOSITE_WEIGHTS
 
     def test_sentiment_has_supporting_infrastructure(self):
-        """
-        Guards against SentimentScore's weight ever being re-added as a
-        placeholder without its actual pipeline — the failure mode this
-        whole test class originally protected against. If someone removes
-        the NLP module or the collectors while leaving the weight in
-        config.py, this should fail as a signal to fix one or the other.
-        """
         import importlib.util
         nlp_path = importlib.util.find_spec("analytics.nlp.sentiment_analyzer")
         assert nlp_path is not None, (
@@ -345,10 +221,6 @@ class TestCompositeWeights:
             "weight or restore the module."
         )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# secondary_position_groups() — spec #13 TM-label -> GK/DEF/MID/FWD mapping
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestSecondaryPositionGroups:
 
@@ -366,48 +238,28 @@ class TestSecondaryPositionGroups:
 
     def test_unrecognized_label_skipped_not_crashed(self):
         assert secondary_position_groups("Some New TM Label") == set()
-        # mixed known + unknown: known one still comes through
         assert secondary_position_groups("Left-Back, Some New TM Label") == {"DEF"}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# select_squad_with_position_cap() — spec #13 flexibility tiebreak
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestFlexibilityTiebreak:
 
     def _synthetic_df(self):
-        """
-        6 GK, 6 DEF, 3 MID, 2 FWD candidates with caps {GK:2, DEF:3, MID:2, FWD:1}
-        (top_n=8) — small but structurally identical to the real 49-player /
-        26-squad case: MID has the thinnest surplus (3 candidates for a cap
-        of 2 -> surplus 1), making it the "understaffed" group.
-
-        For DEF's last (3rd) slot: "Def C" and "Def D" are near-tied
-        (0.001 apart, well under the 0.01 threshold). "Def D" lists MID as a
-        secondary position (understaffed) and should be preferred over
-        "Def C", who has no secondary positions.
-        """
         rows = [
-            # GK
             {"player_id": "GK1", "player_name": "Gk A", "position": "GK", "DSSScore": 0.90, "tm_secondary_positions": None},
             {"player_id": "GK2", "player_name": "Gk B", "position": "GK", "DSSScore": 0.85, "tm_secondary_positions": None},
             {"player_id": "GK3", "player_name": "Gk C", "position": "GK", "DSSScore": 0.40, "tm_secondary_positions": None},
             {"player_id": "GK4", "player_name": "Gk D", "position": "GK", "DSSScore": 0.35, "tm_secondary_positions": None},
             {"player_id": "GK5", "player_name": "Gk E", "position": "GK", "DSSScore": 0.30, "tm_secondary_positions": None},
             {"player_id": "GK6", "player_name": "Gk F", "position": "GK", "DSSScore": 0.25, "tm_secondary_positions": None},
-            # DEF — the tiebreak case is here (last/3rd slot)
             {"player_id": "DEF1", "player_name": "Def A", "position": "DEF", "DSSScore": 0.88, "tm_secondary_positions": None},
             {"player_id": "DEF2", "player_name": "Def B", "position": "DEF", "DSSScore": 0.80, "tm_secondary_positions": None},
             {"player_id": "DEF3", "player_name": "Def C", "position": "DEF", "DSSScore": 0.601, "tm_secondary_positions": None},
             {"player_id": "DEF4", "player_name": "Def D", "position": "DEF", "DSSScore": 0.600, "tm_secondary_positions": "Central Midfield"},
             {"player_id": "DEF5", "player_name": "Def E", "position": "DEF", "DSSScore": 0.40, "tm_secondary_positions": None},
             {"player_id": "DEF6", "player_name": "Def F", "position": "DEF", "DSSScore": 0.35, "tm_secondary_positions": None},
-            # MID — thin: only 3 candidates for a cap of 2 (surplus 1)
             {"player_id": "MID1", "player_name": "Mid A", "position": "MID", "DSSScore": 0.75, "tm_secondary_positions": None},
             {"player_id": "MID2", "player_name": "Mid B", "position": "MID", "DSSScore": 0.70, "tm_secondary_positions": None},
             {"player_id": "MID3", "player_name": "Mid C", "position": "MID", "DSSScore": 0.20, "tm_secondary_positions": None},
-            # FWD
             {"player_id": "FWD1", "player_name": "Fwd A", "position": "FWD", "DSSScore": 0.65, "tm_secondary_positions": None},
             {"player_id": "FWD2", "player_name": "Fwd B", "position": "FWD", "DSSScore": 0.20, "tm_secondary_positions": None},
         ]
@@ -435,12 +287,10 @@ class TestFlexibilityTiebreak:
         assert reason_row["selection_reason"] != "", "Swap must be recorded, not silent"
         assert "MID" in reason_row["selection_reason"]
 
-        # Everyone else keeps an empty (not-swapped) reason
         others = squad_df[squad_df["player_name"] != "Def D"]
         assert (others["selection_reason"] == "").all()
 
     def test_position_caps_and_total_unchanged_by_tiebreak(self):
-        """Regardless of the tiebreak, hard position totals and squad size must hold."""
         from pipelines.gold import run_gold
         df = self._synthetic_df()
         caps = {"GK": 2, "DEF": 3, "MID": 2, "FWD": 1}
@@ -453,12 +303,6 @@ class TestFlexibilityTiebreak:
         assert len(squad_df) == 8
 
     def test_no_close_tie_leaves_pure_dsscore_order_unchanged(self):
-        """
-        Existing squad-selection behavior for cases with no close ties must be
-        unchanged — e.g. FWD's single slot ("Fwd A" @ 0.65 vs "Fwd B" @ 0.20)
-        isn't remotely close, so the higher-scored player wins regardless of
-        flexibility, exactly as before this spec.
-        """
         from pipelines.gold import run_gold
         df = self._synthetic_df()
         caps = {"GK": 2, "DEF": 3, "MID": 2, "FWD": 1}
@@ -485,27 +329,11 @@ class TestFlexibilityTiebreak:
         assert (squad_df["selection_reason"] == "").all()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# build_squad_summary() — regression test for the position-cap bug
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestSquadSummaryPositionCap:
 
     def test_position_breakdown_uses_capped_squad_not_raw_rank(self):
-        """
-        REGRESSION TEST for the 2026-07-14 fix: build_squad_summary() used
-        to filter the FULL 49-player table by raw Rank <= top_n, ignoring
-        the position cap entirely -> could report e.g. 5 GKs in a 26-man
-        squad (verified live on the 2026-07-13 run before this fix).
-
-        This test builds a deliberately GK-heavy synthetic "all_df" (6 GKs
-        in the top ranks) and a correctly capped "squad_df" (3 GKs), and
-        confirms build_squad_summary() reports 3, reading squad_df — NOT 6.
-        """
         from pipelines.gold import run_gold
 
-        # 6 GKs rank in the global top 10 by pure DSSScore (unrealistic but
-        # exactly the scenario that broke in production)
         all_df = pd.DataFrame({
             "player_id":   [f"P{i:03d}" for i in range(10)],
             "player_name": [f"Player {i}" for i in range(10)],
@@ -515,13 +343,11 @@ class TestSquadSummaryPositionCap:
             "Rank":        list(range(1, 11)),
         })
 
-        # The CORRECTLY capped squad (what select_squad_with_position_cap
-        # would produce): only 3 GKs
         squad_df = all_df[all_df["player_name"].isin(
-            ["Player 0", "Player 1", "Player 2",   # 3 GKs (capped)
-             "Player 6", "Player 7",                 # DEF
-             "Player 8",                              # MID
-             "Player 9"]                              # FWD
+            ["Player 0", "Player 1", "Player 2",
+             "Player 6", "Player 7",
+             "Player 8",
+             "Player 9"]
         )].copy()
 
         summary = run_gold.build_squad_summary(squad_df, all_df, top_n=len(squad_df))

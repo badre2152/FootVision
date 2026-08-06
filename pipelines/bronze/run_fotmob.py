@@ -1,16 +1,3 @@
-#!/usr/bin/env python
-# run_fotmob.py — Fotmob Bronze Loader
-#
-# Fetches Gls/Ast/Tkl/Int/Clr per90 from Fotmob using:
-#   - cloudscraper (Cloudflare bypass)
-#   - x-mas token (generated locally via HMAC-SHA256, no external server)
-#
-# Run AFTER run_sd_extractor.py, BEFORE run_silver.py:
-#   python run_fotmob.py                     # all 35 target players
-#   python run_fotmob.py --limit 3           # test first 3
-#   python run_fotmob.py --limit 3 --dry-run # test without upload
-#   python run_fotmob.py --pid P008 P009     # specific players
-
 import argparse
 import json
 import logging
@@ -66,7 +53,6 @@ def main():
 
     results = run_fotmob_loader(seed_path=args.seed, target_pids=target_pids)
 
-    # Coverage report
     logger.info("=" * 60)
     logger.info("COVERAGE REPORT:")
     cols = [

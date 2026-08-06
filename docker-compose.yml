@@ -1,34 +1,3 @@
-# docker-compose.yml — Football DSS Local MinIO Simulator
-# Provides s3://football-bronze/ locally before connecting to the real MinIO instance.
-#
-# Usage:
-#   docker-compose up -d          # Start MinIO
-#   docker-compose down           # Stop
-#   docker-compose down -v        # Stop and delete all data (DESTROYS bronze/silver/gold buckets!)
-#
-# Access:
-#   MinIO API:     http://localhost:9100  (used by Python client)
-#   MinIO Console: http://localhost:9101  (browser UI — admin/minioadmin2152)
-#
-# --- FIX LOG (2026-08-01) ---
-# 1. Removed the obsolete top-level `version: "3.9"` key — Compose v2 ignores
-#    it and prints a warning on every command; dropping it is silent and
-#    harmless.
-# 2. Pinned both `minio/minio` and `minio/mc` to explicit release tags
-#    instead of `:latest`. Root cause of an incident on 2026-08-01: the
-#    volume held data written by an old, locally-cached `latest` image;
-#    re-pulling `latest` later resolved to a *different* digest, and the
-#    server refused to start against the on-disk data format
-#    ("decodeXLHeaders: Unknown xl header version 2"). Pinning removes this
-#    class of silent version-drift entirely — `docker-compose up` will now
-#    always use the exact same MinIO build until this file is edited on
-#    purpose.
-#
-# If you ever need to bump these versions, do it deliberately, take a volume
-# backup first (see RUN_INSTRUCTIONS.md), and confirm the new version is
-# >= the version that last wrote the data — never downgrade against an
-# existing volume.
-
 services:
   minio:
     image: minio/minio:RELEASE.2025-04-08T15-41-24Z
@@ -38,8 +7,8 @@ services:
       MINIO_ROOT_USER:     minioadmin2152
       MINIO_ROOT_PASSWORD: minioadmin2152
     ports:
-      - "9100:9000"   # S3 API
-      - "9101:9101"   # Web console
+      - "9100:9000"
+      - "9101:9101"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -49,7 +18,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # One-shot bucket creation — runs after MinIO is healthy
   minio-init:
     image: minio/mc:RELEASE.2025-04-08T15-39-49Z
     container_name: football_minio_init2152

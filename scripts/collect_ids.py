@@ -1,20 +1,3 @@
-#!/usr/bin/env python
-# scripts/collect_ids.py
-# Helper to resolve understat_id, sofascore_id, and flashscore_id for all 49 players.
-#
-# Strategy:
-#   1. Search each site's API/search endpoint with player name
-#   2. Fuzzy match results against (player_name + club) from seed
-#   3. Export CSV with suggested IDs for manual review (~15-20% need manual fix)
-#
-# Estimated effort: ~80-85% automated, rest manual = 2-4 hours total.
-# flashscore is slower (headless browser per player) — budget more time for 49 players.
-#
-# Run:
-#   python scripts/collect_ids.py --source understat  --output seeds/understat_ids_draft.csv
-#   python scripts/collect_ids.py --source sofascore  --output seeds/sofascore_ids_draft.csv
-#   python scripts/collect_ids.py --source flashscore --output seeds/flashscore_ids_draft.csv
-
 import argparse
 import re
 import time
@@ -33,20 +16,6 @@ _UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 
 def _surname_matches(seed_name: str, candidate_name: str, threshold: int = 80) -> bool:
-    """
-    Guards against WRatio's token-set behavior, which scores names highly
-    when ANY single token overlaps (e.g. shared first name "Mehdi"/"Omar")
-    even if the surname is completely different. WRatio alone matched
-    'Issa Diop' to 'Traore Issa' at score=85 — same first name, wrong
-    person entirely.
-
-    Treats the LAST token of the seed player's full name as the surname
-    (works for "El Mehdi Al Harrar" -> "Harrar", "Issa Diop" -> "Diop") and
-    requires it to appear, fuzzily, among the candidate's name tokens.
-    Candidate names from these sources are often "Surname First" or
-    "First Surname" in either order, so token-level comparison (not
-    substring) is required.
-    """
     seed_tokens = seed_name.strip().split()
     cand_tokens = candidate_name.strip().split()
     if not seed_tokens or not cand_tokens:
@@ -56,13 +25,7 @@ def _surname_matches(seed_name: str, candidate_name: str, threshold: int = 80) -
     return bool(best) and best[1] >= threshold
 
 
-# ── Understat ─────────────────────────────────────────────────────────────────
-
 def search_understat(name: str) -> list[dict]:
-    """
-    Understat player search endpoint.
-    Returns list of {id, player_name, team_title, ...}
-    """
     try:
         resp = requests.get(
             "https://understat.com/main/getPlayersName/",
@@ -78,12 +41,11 @@ def search_understat(name: str) -> list[dict]:
 
 
 def resolve_understat_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
-    """Fuzzy-matches seed players against Understat search results."""
     rows = []
     for _, player in seed_df.iterrows():
         name  = player["player_name"]
         club  = player.get("club", "")
-        query = name  # Search by name only; fuzzy match on full key
+        query = name
 
         candidates = search_understat(query)
         time.sleep(1.5)
@@ -99,7 +61,6 @@ def resolve_understat_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
             })
             continue
 
-        # Build match key: "player_name club"
         candidate_keys = [f"{c.get('player_name', '')} {c.get('team_title', '')}" for c in candidates]
         query_key      = f"{name} {club}"
 
@@ -133,8 +94,6 @@ def resolve_understat_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── SofaScore ─────────────────────────────────────────────────────────────────
-
 _SOFASCORE_SEARCH_URL = "https://api.sofascore.com/api/v1/search/players?q={name}"
 _SOFASCORE_HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -144,7 +103,6 @@ _SOFASCORE_HEADERS = {
 
 
 def search_sofascore(name: str) -> list[dict]:
-    """SofaScore player search. Returns list of player dicts."""
     try:
         resp = requests.get(
             _SOFASCORE_SEARCH_URL.format(name=requests.utils.quote(name)),
@@ -160,7 +118,6 @@ def search_sofascore(name: str) -> list[dict]:
 
 
 def resolve_sofascore_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
-    """Fuzzy-matches seed players against SofaScore search results."""
     rows = []
     for _, player in seed_df.iterrows():
         name  = player["player_name"]
@@ -180,10 +137,9 @@ def resolve_sofascore_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
             })
             continue
 
-        # SofaScore returns nested: {"player": {"id": ..., "name": ..., "team": ...}}
         flat = []
         for c in candidates:
-            p = c.get("player", c)  # handle both formats
+            p = c.get("player", c)
             flat.append({
                 "id":   p.get("id"),
                 "name": p.get("name", ""),
@@ -222,65 +178,11 @@ def resolve_sofascore_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── FlashScore ────────────────────────────────────────────────────────────────
-#
-# FlashScore has no JSON search endpoint — search is a Radix UI modal dialog
-# rendered client-side. This collector drives headless Chromium (Playwright)
-# to open the modal, type into the search input, and read suggestion results
-# out of the DOM.
-#
-# Confirmed via live DevTools inspection (2026-06-18): result links are NOT
-# /player/{slug}/{id}/ as originally assumed — they're query-param links
-# (/?r={type}:{id}, opaque alphanumeric id, no slug). See the result-parsing
-# block below for the full confirmed markup.
-#
-# Slower than the requests-based collectors above (~5-8s/player vs ~1.5s) and
-# more fragile — DOM selectors here are best-effort, same caveat as
-# flashscore_loader.py. Requires: playwright install chromium
-
 _FLASHSCORE_SEARCH_URL = "https://www.flashscore.com/"
-
-
-# Confirmed via live DevTools + manual click-through (2026-06-18):
-#   <a class="searchResult" href="/?r=4:MqFBkBsp">
-#     <div class="searchResult__participantName">Hakimi Achraf<span class="...flag" title="Morocco"></span></div>
-#     <div class="searchResult__participantCategory">Soccer, PSG</div>
-#   </a>
-# Key findings that changed the original (untested) assumptions:
-#   - The search result href (/?r=4:ID) does NOT contain the slug. Clicking
-#     a result triggers a CLIENT-SIDE (JS) navigation to the real URL
-#     /player/{slug}/{id}/ — there is no server redirect to follow with a
-#     plain HTTP request; Playwright must actually click and let the SPA
-#     route, then read page.url() to learn the slug.
-#   - The slug is NOT cosmetic. Manually testing a placeholder slug with the
-#     correct id (/player/x/MqFBkBsp/) returned a 404 — FlashScore's player
-#     route validates slug+id together, so a wrong/fake slug breaks the
-#     player page even when the id is exactly right.
-#   - A common name returns many unrelated people across sports/countries
-#     (e.g. searching "Hakimi" returned 17 results: footballers, an eSports
-#     profile, Malaysian players, a tennis player). MUST filter to
-#     "Soccer, " category prefix before matching, or noise from other
-#     sports wins.
 _FLASHSCORE_PLAYER_URL_RE = re.compile(r"/player/([a-z0-9-]+)/([A-Za-z0-9]+)/?$")
 
 
 def _flashscore_search_one(page, name: str) -> list[dict]:
-    """
-    Opens FlashScore's search modal, types `name`, and reads soccer-player
-    candidates. For each candidate this clicks through to the real player
-    page (in a fresh tab) to read the actual slug out of page.url() — the
-    search dropdown's href does not contain it, and a wrong slug 404s even
-    with the correct id (confirmed manually), so it cannot be guessed.
-
-    Search itself is a 2-step interaction:
-      1. Click the search trigger (#search-window) to open the modal.
-      2. The modal renders a Radix UI dialog with a NEW <input> element
-         (class="searchInput__input") that doesn't exist in the DOM before
-         the click — a direct `.fill()` on a pre-existing locator times out.
-      The dialog uses Radix-generated dynamic IDs (radix-«r0») which are NOT
-      stable across loads — never select on those, only on
-      `.searchInput__input` / `.searchResult`, which are real CSS classes.
-    """
     candidates: list[dict] = []
     try:
         page.goto(_FLASHSCORE_SEARCH_URL, timeout=20000, wait_until="domcontentloaded")
@@ -293,50 +195,30 @@ def _flashscore_search_one(page, name: str) -> list[dict]:
         search_box.wait_for(state="visible", timeout=8000)
         search_box.fill(name, timeout=5000)
 
-        # Modal note: "Please type at least 2 characters" — results render
-        # after a short debounce.
         page.wait_for_timeout(random.randint(1200, 2000))
 
         results = page.locator("a.searchResult").all()
         soccer_results = []
-        for result in results[:20]:  # common names return many cross-sport hits
+        for result in results[:20]:
             category_el = result.locator(".searchResult__participantCategory").first
             category = (category_el.inner_text(timeout=1500) or "") if category_el.count() else ""
             if not category.strip().lower().startswith("soccer"):
-                continue  # skip tennis/eSports/other-sport namesakes
+                continue
 
             name_el = result.locator(".searchResult__participantName").first
             label = (name_el.inner_text(timeout=1500) or "").strip() if name_el.count() else ""
             club = category.split(",", 1)[1].strip() if "," in category else ""
-            # Read href NOW, while the search modal's DOM is still fresh.
-            # Re-reading element.get_attribute("href") later, mid click-through
-            # loop, risks a stale/changed locator if the underlying page's DOM
-            # shifts during the 1.5-2.5s navigation of earlier candidates
-            # (live score updates, ads, modal state) — confirmed in practice:
-            # the modal's FIRST result (correct match) silently produced a
-            # wrong/empty href on click-through while later results worked,
-            # consistent with locator staleness rather than a search-ranking
-            # issue. Capturing all hrefs upfront removes that race entirely.
             href = result.get_attribute("href") or ""
             soccer_results.append({"name": label, "club": club, "href": href})
 
-        # Click through each soccer candidate (in a new tab, to keep the
-        # search modal/results intact for the remaining candidates) and
-        # read the real slug+id off the resulting URL.
         context = page.context
-        for cand in soccer_results[:6]:  # cap clicks per name to bound runtime
+        for cand in soccer_results[:6]:
             href = cand["href"]
             if not href:
                 logger.info("FlashScore: empty href for candidate '%s', skipping", cand["name"])
                 continue
             new_page = context.new_page()
             try:
-                # The href itself (/?r=4:ID) IS enough to trigger FlashScore's
-                # client-side router to the real /player/{slug}/{id}/ URL when
-                # loaded directly — confirmed: this is the same param format
-                # the SPA reads on click, so navigating to it lets the app's
-                # own redirect logic resolve the slug for us, without
-                # depending on modal/dropdown DOM state in a second tab.
                 new_page.goto(
                     f"https://www.flashscore.com{href}",
                     timeout=15000,
@@ -367,7 +249,6 @@ def _flashscore_search_one(page, name: str) -> list[dict]:
 
 
 def resolve_flashscore_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
-    """Fuzzy-matches seed players against FlashScore search suggestions."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -406,11 +287,6 @@ def resolve_flashscore_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
                 })
                 continue
 
-            # Match on "name club" against each candidate's "name club" —
-            # club comes from the real searchResult__participantCategory
-            # text (e.g. "Soccer, PSG" -> club="PSG"), confirmed live. This
-            # is what disambiguates Achraf Hakimi (PSG) from the many other
-            # "Hakimi" namesakes FlashScore returns (Malaysia, Tunisia, etc.)
             candidate_keys = [f"{c['name']} {c['club']}" for c in candidates]
             query_key      = f"{name} {club}"
 
@@ -420,7 +296,7 @@ def resolve_flashscore_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
 
             matched   = candidates[idx]
             surname_ok = _surname_matches(name, matched["name"])
-            confident = score >= 80 and surname_ok  # lower bar than API sources — labels are noisier here
+            confident = score >= 80 and surname_ok
 
             rows.append({
                 "player_id":       player["player_id"],
@@ -444,8 +320,6 @@ def resolve_flashscore_ids(seed_df: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Resolve player IDs for Bronze sources")
@@ -477,17 +351,6 @@ def main() -> None:
 
     output = args.output or f"seeds/{args.source}_ids_draft.csv"
 
-    # Same-candidate collision guard: two different seed players resolving to
-    # the SAME matched_name+matched_club means the upstream search/match step
-    # picked one external profile for both of them — one is right, the other
-    # is wrong, and we can't tell which from the score alone. This must be
-    # checked on matched_name+matched_club (not on the final id column),
-    # because the surname filter above already nulls out the id for the
-    # rejected row — checking only the id column would miss the collision
-    # entirely once one side is empty (confirmed: this is exactly what
-    # happened with 'Bilal El Khannouss' / 'Bilal Nadir' both resolving to
-    # 'Nadir Bilal, MARSEILLE' — only one side kept a non-null id, so a
-    # check on the id column alone saw no duplicate).
     match_key = result_df["matched_name"].fillna("") + "|" + result_df.get("matched_club", "").fillna("")
     collision_mask = (match_key != "|") & match_key.duplicated(keep=False)
     if collision_mask.any():
@@ -500,9 +363,6 @@ def main() -> None:
         result_df.loc[collision_mask, id_col] = None
         result_df.loc[collision_mask, "needs_review"] = True
 
-    # Duplicate-ID guard: belt-and-suspenders check on the final id itself,
-    # in case two DIFFERENT matched_name/club pairs somehow still produced
-    # the same external id.
     dup_mask = result_df[id_col].notna() & result_df.duplicated(subset=[id_col], keep=False)
     if dup_mask.any():
         dup_ids = result_df.loc[dup_mask, id_col].unique().tolist()

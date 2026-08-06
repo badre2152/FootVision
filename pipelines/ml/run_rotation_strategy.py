@@ -1,19 +1,3 @@
-#!/usr/bin/env python
-# run_rotation_strategy.py — Football DSS — Rotation Strategy (group stage)
-#
-# Standalone (not wired into run_gold.py, same reasoning as
-# run_selection_audit.py / run_injury_predictor.py — this is a
-# squad-management tool, not a scoring input).
-#
-# Requires gold/top26_*.csv (from run_gold.py). Optionally merges in
-# gold/injury_predictor_*.csv (from run_injury_predictor.py) for a real
-# injury_risk_penalty component — falls back to neutral if absent, with a
-# warning, same pattern as recommend_xi() itself.
-#
-# Run AFTER run_gold.py (and ideally run_injury_predictor.py):
-#   python run_rotation_strategy.py
-#   python run_rotation_strategy.py --no-validate   # skip the real-XI comparison
-
 import argparse
 import glob
 import json

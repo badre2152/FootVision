@@ -1,11 +1,3 @@
-# tests/test_youtube_collector.py
-#
-# Tests ingestion/loaders/youtube_collector.py's collection logic using
-# MOCKED YouTube API objects — no live network calls (googleapis.com is
-# not reachable from this environment). Validates request-building,
-# text-extraction, comments-disabled handling, and the quota-budget
-# early-stop logic.
-
 import sys
 import os
 from unittest.mock import MagicMock, patch
@@ -32,7 +24,6 @@ def _make_http_error(status=403, message="commentsDisabled"):
 
 
 def _make_search_response(items):
-    """items: list of (video_id, title) tuples"""
     return {
         "items": [
             {"id": {"videoId": vid}, "snippet": {"title": title}}
@@ -67,18 +58,9 @@ class TestCollectPlayerTexts:
         assert "Hakimi is a great player!" in texts
 
     def test_filters_content_not_mentioning_player(self):
-        """
-        REGRESSION TEST for the real bug found via data-analysis of the
-        first full run (2026-07-24): YouTube comment sections are
-        especially prone to drifting off-topic (praise for a different
-        player, general match banter) — a video matching the search query
-        does NOT mean its comments are actually about the player. Same
-        class of bug independently found in arctic_shift_collector.py and
-        newsapi_collector.py.
-        """
         mock_yt = MagicMock()
         mock_yt.search().list().execute.return_value = _make_search_response(
-            [("vid1", "Morocco vs Canada World Cup highlights")]  # doesn't mention Hakimi
+            [("vid1", "Morocco vs Canada World Cup highlights")]
         )
         mock_yt.commentThreads().list().execute.return_value = _make_comments_response(
             ["Messi is the GOAT", "What a match overall", "Hakimi's pass was incredible though"]
@@ -86,17 +68,12 @@ class TestCollectPlayerTexts:
 
         texts = _collect_player_texts(mock_yt, HttpError, "Achraf Hakimi", {})
 
-        assert "Morocco vs Canada World Cup highlights" not in texts  # title doesn't mention him
+        assert "Morocco vs Canada World Cup highlights" not in texts
         assert "Messi is the GOAT" not in texts
         assert "What a match overall" not in texts
-        assert "Hakimi's pass was incredible though" in texts  # this one does mention him
+        assert "Hakimi's pass was incredible though" in texts
 
     def test_comments_disabled_skips_video_not_whole_player(self):
-        """
-        A 403 (comments disabled) on ONE video must not lose the video's
-        title or crash — it should just skip fetching that video's
-        comments and continue.
-        """
         mock_yt = MagicMock()
         mock_yt.search().list().execute.return_value = _make_search_response(
             [("vid1", "News clip about a player")]
@@ -105,7 +82,6 @@ class TestCollectPlayerTexts:
 
         texts = _collect_player_texts(mock_yt, HttpError, "Some Player", {})
 
-        # Title still captured even though comments failed
         assert texts == ["News clip about a player"]
 
     def test_search_failure_returns_empty_list_not_crash(self):
@@ -117,12 +93,6 @@ class TestCollectPlayerTexts:
         assert texts == []
 
     def test_temporal_cutoff_published_before_defaults_to_decision_date(self):
-        """
-        TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): before this fix, this
-        search had NO date bound at all. Confirms `publishedBefore` is now
-        always sent — the start of the day AFTER config.DECISION_DATE (so
-        content published ON that date is still included).
-        """
         from config import DECISION_DATE
 
         mock_yt = MagicMock()
@@ -147,7 +117,6 @@ class TestCollectPlayerTexts:
         assert call_kwargs["publishedBefore"] == "2026-01-02T00:00:00Z"
 
     def test_video_without_id_is_skipped_for_comments(self):
-        """Defensive: a search result missing videoId shouldn't crash comment-fetching."""
         mock_yt = MagicMock()
         mock_yt.search().list().execute.return_value = {
             "items": [{"id": {}, "snippet": {"title": "Player scores a great goal"}}]
@@ -187,15 +156,8 @@ class TestLoadYoutubeBronze:
             load_youtube_bronze(bad_seed, run_date="TEST")
 
     def test_quota_budget_stops_early(self, monkeypatch):
-        """
-        REGRESSION-DOCUMENTING TEST for the quota-budget guard: confirms
-        that once the running total gets within SEARCH_QUOTA_COST of the
-        9500-unit soft cap, remaining players are skipped cleanly instead
-        of firing requests that would get quota-rejected.
-        """
         monkeypatch.setenv("YOUTUBE_API_KEY", "fake-key")
 
-        # 96 players so the cap (9500/100=95 searches) triggers partway through
         seed = pd.DataFrame({
             "player_id": [f"P{i:03d}" for i in range(96)],
             "player_name": [f"Player {i}" for i in range(96)],
@@ -209,7 +171,6 @@ class TestLoadYoutubeBronze:
                    return_value=(mock_yt_client, HttpError)):
             status = load_youtube_bronze(seed, run_date="TEST")
 
-        # Should mention a quota estimate under 10000, proving it stopped early
         assert "quota units used" in status
 
 

@@ -1,9 +1,3 @@
-# tests/test_opponent_analyzer.py
-#
-# Test suite for analytics/opponent_analyzer.py — real, static WC2026
-# fixture history (not a scraper, not tactical analysis — see module
-# docstring).
-
 import sys
 import os
 
@@ -49,7 +43,7 @@ class TestFixtureData:
     def test_netherlands_match_recorded_as_penalty_win(self):
         df = get_fixtures()
         row = df[df["opponent"] == "Netherlands"].iloc[0]
-        assert row["morocco_goals"] == row["opponent_goals"] == 1  # 1-1 in regulation
+        assert row["morocco_goals"] == row["opponent_goals"] == 1
         assert row["penalties"] == "3-2 Morocco"
         assert row["advanced"] is True
 
@@ -61,15 +55,11 @@ class TestTournamentRunSummary:
         assert summary.eliminated_by == ELIMINATED_BY == "France"
 
     def test_record_is_3_wins_2_draws_1_loss(self):
-        # Wins: Scotland, Haiti, Canada = 3
-        # Draws (incl. shootout win, still a draw in 90/120 min): Brazil, Netherlands = 2
-        # Losses: France = 1
         summary = tournament_run_summary()
         assert summary.record == {"wins": 3, "draws": 2, "losses": 1}
 
     def test_goal_tallies(self):
         summary = tournament_run_summary()
-        # 1+1+4+1+3+0 = 10 for; 1+0+2+1+0+2 = 6 against
         assert summary.goals_for == 10
         assert summary.goals_against == 6
         assert summary.goal_difference == 4

@@ -1,48 +1,3 @@
-# analytics/ml/selection_classifier.py
-# ML Layer — Selection Audit + Selection Classifier
-#
-# Added 2026-07-29, SAME DAY the real ground truth became available: Morocco's
-# official 26-man 2026 World Cup squad was announced 2026-05-26 by head coach
-# Mohamed Ouahbi. (Source: FIFA / worldcupstats.football, cross-checked
-# 2026-07-29 — see REAL_SQUAD_2026 below for the exact list and source URL.)
-#
-# This is the reason Selection Classifier could NOT be built earlier: every
-# prior session (through 2026-07-29) had no real y label, and using the
-# pipeline's own top-26-by-DSSScore as a label would have been circular (see
-# player_clustering.py's header for the same argument, and the "no idea"
-# exchange with the user on 2026-07-29 about whether ground truth existed —
-# it didn't, until this search).
-#
-# ─────────────────────────────────────────────────────────────────────────
-# HEADLINE RESULT — READ THIS BEFORE TRUSTING ANYTHING DOWNSTREAM
-# ─────────────────────────────────────────────────────────────────────────
-# audit_vs_dss_ranking() on the 2026-07-27 Gold run found only 15/26 overlap
-# between DSSScore's top-26 and the real squad. A hypergeometric test against
-# pure random selection (N=49, K=26 real picks, n=26 drawn) gives:
-#     P(overlap >= 15 | random selection) = 0.343
-# i.e. the DSSScore-based squad selection is NOT statistically distinguishable
-# from a random draw of 26 out of 49, on this one real-world validation point.
-#
-# This is a single n=1 "trial" (one coach's one squad announcement), so it
-# does not "prove" the formula is worthless — but it is the ONLY real
-# validation data this project has ever had, and it came back indistinguishable
-# from noise. A major likely confound: Walid Regragui (the coach the entire
-# scoring formula's design — MASTER_SPEC.md's "Option B" framing, the whole
-# TacticalFitScore concept — implicitly assumed) resigned 2026-03-05. Mohamed
-# Ouahbi, a different coach with a different style and no track record this
-# pipeline was tuned against, made the actual picks. The gap between DSSScore
-# and reality may say as much about "the coach changed" as it does about "the
-# formula is wrong" — this module does not have the data to separate those
-# two explanations, and neither should any report built on it.
-#
-# WHAT THIS MEANS FOR THE CLASSIFIER BELOW: LogisticRegression with
-# leave-one-out CV is included as an honest exploratory exercise (does any
-# combination of the 9 sub-scores separate real picks from non-picks better
-# than chance?), not as a "prediction API" to be trusted for a future squad.
-# Its own accuracy is reported next to the same random-baseline p-value, and
-# it does NOT reliably beat it either — see fit_loocv_classifier()'s return
-# value and run_selection_audit.py's printed output.
-
 from __future__ import annotations
 
 import logging
@@ -59,39 +14,20 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────
-# Ground truth: Morocco's official 2026 FIFA World Cup squad
-# Announced 2026-05-26 by head coach Mohamed Ouahbi (successor to Walid
-# Regragui, who resigned 2026-03-05).
-# Source: https://worldcupstats.football/teams/morocco/squad/
-#         (cross-referenced against FIFA.com and Heavy.com squad-announcement
-#          coverage, 2026-07-29)
-# Spellings below are as published; match_real_squad() fuzzy-matches these
-# against whatever spelling the project's own player_name column uses
-# (rapidfuzz — already a project dependency per MASTER_SPEC.md's tech stack).
-# ─────────────────────────────────────────────────────────────────────────
 REAL_SQUAD_2026: list[str] = [
-    # GK (3)
     "Yassine Bounou", "Munir El Kajoui", "Ahmed Reda Tagnaouti",
-    # DEF (9)
     "Achraf Hakimi", "Noussair Mazraoui", "Marwane Saadane", "Zakaria El Ouahdi",
     "Issa Diop", "Chadi Riad", "Youssef Belammari", "Redouane Halhal",
     "Anass Salah Eddine",
-    # MID (9)
     "Sofyan Amrabat", "Ayyoub Bouaddi", "Chemsdine Talbi", "Azzedine Ounahi",
     "Ismael Saibari", "Samir El Mourabet", "Gessime Yassine",
     "Bilal El Khannouss", "Neil El Aynaoui",
-    # FWD (5)
     "Soufiane Rahimi", "Brahim Diaz", "Amine Sbai", "Ayoub El Kaabi",
     "Ayoube Amaimouni",
 ]
 
-FUZZY_MATCH_THRESHOLD = 85  # WRatio 0-100; below this, treat as no match
+FUZZY_MATCH_THRESHOLD = 85
 
-# Sub-score features used by the classifier. Deliberately NOT DSSScore or
-# DSSScore_pct — those are literally a fixed linear combination of these,
-# so including them would make "does the classifier beat the formula"
-# unanswerable (it would just be told the formula's own output).
 CLASSIFIER_FEATURES: list[str] = [
     "PerformanceScore", "FormScore", "MentalScore", "AvailabilityScore",
     "InternationalScore", "ChemistryScore", "PressureIndex",
@@ -101,9 +37,9 @@ CLASSIFIER_FEATURES: list[str] = [
 
 @dataclass
 class MatchResult:
-    df: pd.DataFrame                    # + "real_squad_selected", "real_squad_match_score"
+    df: pd.DataFrame
     matched_count: int
-    unmatched_real_squad: list[str]     # real-squad names with no confident match — investigate!
+    unmatched_real_squad: list[str]
 
 
 def match_real_squad(
@@ -230,7 +166,7 @@ class LOOCVResult:
     f1: float
     n_samples: int
     random_baseline_pvalue: float
-    coefficients: pd.Series          # standardized LR coefficients, full-data fit — for interpretation only
+    coefficients: pd.Series
     beats_random_baseline: bool
 
 
@@ -290,8 +226,6 @@ def fit_loocv_classifier(
         if n_predicted_positive > 0 else 1.0
     )
 
-    # Full-data fit for interpretable coefficients only (not used for the
-    # accuracy numbers above, which come strictly from the LOOCV loop).
     scaler_full = StandardScaler().fit(X)
     clf_full = LogisticRegression(max_iter=1000, C=1.0).fit(scaler_full.transform(X), y)
     coefficients = pd.Series(clf_full.coef_[0], index=features).sort_values(key=abs, ascending=False)

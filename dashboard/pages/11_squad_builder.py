@@ -1,33 +1,3 @@
-# dashboard/pages/11_squad_builder.py
-# Football Atlas — Squad Builder page
-#
-# Added 2026-07-30.
-#
-# ─────────────────────────────────────────────────────────────────────────
-# WHY DROPDOWNS INSTEAD OF DRAG-AND-DROP
-# ─────────────────────────────────────────────────────────────────────────
-# PROJECT.md's original spec: "Interface glisser-déposer + score
-# automatique" (drag-and-drop interface + automatic score). Streamlit has
-# no native drag-and-drop widget — building real drag-and-drop would mean
-# writing a custom JS/React Streamlit component (a separate, much larger
-# engineering task, and a dependency this project's stack doesn't already
-# have anywhere).
-#
-# What matters functionally about "Squad Builder" is the SECOND half —
-# "construction manuelle + score automatique" (manual construction, score
-# updates automatically) — and that doesn't actually require drag-and-drop
-# as the input mechanism. This page delivers that with a per-slot
-# dropdown: pick a formation, get analytics/competition_context.py's
-# automatic Best XI pre-filled, then override any individual slot from a
-# position-filtered player list. The score recalculates live either way.
-# This is a genuine, honestly-labeled substitution for the UI mechanism,
-# not a partial/fake version of the actual feature (manual override +
-# live automatic scoring) that feature was actually meant to enable.
-#
-# Same sub-position caveat as dashboard/pages/06_tactical_board.py applies:
-# slots within DEF/MID/FWD are generic (no LB/CB/RB or DM/AM distinction),
-# since this project's `position` column doesn't have that granularity.
-
 import sys
 from pathlib import Path
 
@@ -43,7 +13,7 @@ from dashboard.report_utils import csv_download_button
 from analytics.scouting.competition_context import build_best_xi, FORMATIONS
 
 st.set_page_config(page_title="Football Atlas — Squad Builder", page_icon="🛠️", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("🛠️ Squad Builder")
 st.caption(
@@ -57,25 +27,10 @@ if top26 is None or players_full is None:
     st.error("No Gold output found. Run `run_gold.py` first.")
     st.stop()
 
-# IMPORTANT (found by actually running this page's logic against real
-# data, not by reading the code): build_best_xi()'s returned starting_xi
-# is sliced from `candidate_pool` (top26) wherever top26 alone has enough
-# depth, and only pulls from `fallback_pool` (players_full) for slots
-# that were actually short. Since top26_*.csv has NO player_id column
-# (see competition_context.py's _resolve_id_col), auto_result.starting_xi
-# frequently has NO player_id column either — it inherited top26's
-# columns for most rows. Using "player_id" as this page's id_col crashed
-# with a real KeyError the first time this was tested against actual
-# Gold output. `player_name` is the only column guaranteed present in
-# BOTH top26-sourced and players_full-sourced rows, so it's used
-# consistently everywhere in this page — same trade-off
-# competition_context.py's own docstring already accepts (a shared exact
-# name would collide; not the case in the current 49-candidate roster).
 id_col = "player_name"
 
 formation = st.selectbox("Formation", list(FORMATIONS.keys()), index=0, key="sb_formation")
 
-# Reset the manual picks whenever the formation changes, or on explicit request.
 if st.session_state.get("sb_last_formation") != formation:
     st.session_state["sb_picks"] = {}
     st.session_state["sb_last_formation"] = formation
@@ -86,8 +41,6 @@ if st.button("↺ Reset to automatic Best XI"):
 auto_result = build_best_xi(top26, formation=formation, fallback_pool=players_full)
 slots = {"GK": 1, **FORMATIONS[formation]}
 
-# Build the ordered list of (position, slot_index) -> default player id from
-# the automatic result, so each dropdown has a sensible pre-fill.
 auto_by_position: dict[str, list] = {}
 for position in slots:
     auto_by_position[position] = (
@@ -111,25 +64,9 @@ for position, n_slots in slots.items():
         slot_key = f"{position}_{i}"
         default_id = auto_by_position[position][i] if i < len(auto_by_position[position]) else None
 
-        # Options for THIS slot: every player at this position not already
-        # claimed by an EARLIER slot this pass (selected_ids only holds
-        # earlier slots' picks at this point — this slot's own pick is
-        # added to selected_ids only after its selectbox below, so there's
-        # no need to self-exempt it here).
         available = position_pool[~position_pool[id_col].isin(selected_ids)]
         options = available[id_col].tolist()
 
-        # FIX (found by actually simulating this exact sequence, not by
-        # inspection): if a user manually overrides an EARLIER slot to a
-        # player who happens to be a LATER slot's untouched automatic
-        # default, that default is no longer safe to reuse here — it's
-        # already taken. Falling back to the automatic default blindly
-        # produced a real duplicate (two slots resolving to the same
-        # player, verified by running this exact scenario against real
-        # Gold data before shipping this page). Resolution order:
-        #   1. this slot's own previously-stored pick, if still available
-        #   2. else the automatic default, if not already taken
-        #   3. else the best remaining player at this position
         current_pick = picks.get(slot_key)
         if current_pick not in options:
             current_pick = default_id if default_id not in selected_ids else None
@@ -187,12 +124,6 @@ st.dataframe(
 )
 csv_download_button(manual_xi_sorted[display_cols], filename_prefix="squad_builder_xi", key="csv_squad_builder")
 
-# ── #20 — Coach/Staff Notes, compact read-only view ─────────────────────
-# This page uses player_name as its id_col throughout (see the module
-# docstring above for why player_id isn't reliably present here), but
-# notes_store is keyed by player_id — so notes are looked up via
-# players_full, which always has a real player_id column, joined back on
-# player_name (the one column guaranteed present everywhere on this page).
 if "player_id" in players_full.columns:
     st.subheader("Coach notes for this XI")
     all_notes = get_all_notes()

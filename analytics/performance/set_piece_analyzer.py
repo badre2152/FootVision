@@ -1,56 +1,8 @@
-# analytics/set_piece_analyzer.py
-# "Set Piece & Clutch" — the buildable slice of PROJECT.md's original spec.
-#
-# Added 2026-07-30.
-#
-# ─────────────────────────────────────────────────────────────────────────
-# WHAT'S HERE, AND WHAT ISN'T
-# ─────────────────────────────────────────────────────────────────────────
-# PROJECT.md § Dashboard page 8 was three things bundled together:
-#   1. "Pressure Index chart"                    -> exists already,
-#      analytics/scoring/pressure_index.py (built 2026-07-14). This module
-#      wraps it with a readable label, nothing more (see clutch_ranking()).
-#   2. "90+ minutes performance"                  -> NOT built. Checked
-#      ingestion/loaders/statsbomb_loader.py directly: it only estimates
-#      TOTAL minutes per player (matches_played * 80, a rough approximation
-#      — see MIN_MINUTES/"Estimate minutes" in that file), never extracts
-#      minute-by-minute event timestamps. Genuine "90th-minute-onward
-#      performance" needs raw match-event data with in-game clock, which
-#      this project's Bronze layer does not retain anywhere.
-#   3. "Spécialistes set pieces" (corners, free kicks, headers)
-#                                                  -> NOT built. Checked
-#      every Bronze loader and Silver column — grep for corner/free.kick/
-#      set.piece/header across the whole codebase returns nothing. No
-#      source here tags an event as a corner/free-kick/header, so there is
-#      no way to identify a "set-piece specialist" honestly.
-#
-# See ninety_plus_performance() and set_piece_specialists() below — both
-# exist as named stubs raising NotImplementedError with this same
-# explanation, same pattern as competition_context.py's
-# tactical_fit_vs_opponent() and opponent_analyzer.py's
-# tactical_style_profile().
-#
-# ─────────────────────────────────────────────────────────────────────────
-# A GAP THIS MODULE FIXES: PressureIndex HAD NO REAL/IMPUTED FLAG
-# ─────────────────────────────────────────────────────────────────────────
-# analytics/scoring/pressure_index.py computes pressure_delta = sb_xg_per90
-# - xg_per90, but only 10/11 StatsBomb-covered outfield players actually
-# have BOTH values — the other ~38-39/49 get a position-group-median
-# IMPUTED value (see that module's _impute_pressure_delta()), and this
-# imputation is never flagged anywhere in Gold's output columns (checked:
-# gold/players_scored_*.csv has no pressure_delta confidence column,
-# unlike ga_imputed_flag or intl_caps_data_missing elsewhere in this
-# project's culture of flagging imputation). clutch_ranking() below
-# reconstructs the same "both raw values present" condition
-# pressure_index.py's own source uses internally, and surfaces it as
-# `pressure_data_confidence` — so a player's imputed group-median
-# pressure_delta isn't presented as if it were their own real signal.
-
 from __future__ import annotations
 
 import pandas as pd
 
-CLUTCH_THRESHOLD = 0.03  # pressure_delta above/below this -> a labeled tendency, not just noise (illustrative, not calibrated — see pressure_index.py's own docstring for why: no outcome data exists to calibrate against)
+CLUTCH_THRESHOLD = 0.03
 
 REQUIRED_COLUMNS = ["player_name", "pressure_delta", "PressureIndex"]
 

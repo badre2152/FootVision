@@ -1,9 +1,3 @@
-# Football DSS — Makefile
-#
-# DECISION_DATE: single source of truth for any "as-of" date used across
-# targets (currently only ml-injury's --reference-date accepts one — see
-# the note above that target for why it is NOT wired into bronze/silver/gold).
-# Override on the command line: `make ml-injury DECISION_DATE=2026-11-01`
 DECISION_DATE ?= $(shell date +%Y-%m-%d)
 
 .PHONY: help install start stop \
@@ -64,12 +58,6 @@ bronze-fast:
 	MINIO_MOCK=1 python -m pipelines.bronze.run_bronze \
 		--skip-understat --skip-sofascore --skip-statsbomb --skip-wikidata
 
-# NOTE: none of run_sofifa / run_fotmob / run_sd_extractor expose an
-# --as-of flag (confirmed via each script's own --help — see spec #8).
-# DECISION_DATE is therefore defined above but deliberately NOT passed to
-# these commands; doing so would just fail with "unrecognized arguments".
-# Order matters — run_fotmob must run AFTER run_sd_extractor (see
-# RUN_INSTRUCTIONS.md § 2).
 bronze-sd-extractor:
 	python -m pipelines.bronze.run_sd_extractor
 
@@ -91,7 +79,6 @@ pipeline: bronze silver gold
 ml-dna:
 	python -m pipelines.ml.run_player_dna
 
-# --reference-date is the one real "as-of" hook in the project today.
 ml-injury:
 	python -m pipelines.ml.run_injury_predictor --reference-date $(DECISION_DATE)
 

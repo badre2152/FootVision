@@ -1,23 +1,3 @@
-#!/usr/bin/env python
-# run_bronze.py - Football DSS Bronze Layer Orchestrator v18
-#
-# Runs all Bronze loaders in sequence, writes results to MinIO.
-# Silver reads from MinIO only - this script is the ONLY place that calls loaders.
-#
-# FIX B-06: silver_pipeline.py in v15 imported Bronze loaders directly.
-#            That violates the Medallion boundary. Bronze is orchestrated HERE only.
-# FIX C-04 (v17): --fail-fast flag raises RuntimeError on any FAILED upload.
-# v18: Added FlashScore loader (Source 15 - rating fallback #2, ADR-018 chain).
-#      SofaScore import is guarded (loader file currently exports flashscore fn).
-#
-# Usage:
-#   python run_bronze.py                              # Full ingestion - all 9 sources
-#   python run_bronze.py --limit 5                   # Quick test on 5 players
-#   python run_bronze.py --only-flashscore           # FlashScore only (fastest test)
-#   python run_bronze.py --only-flashscore --limit 3 # FlashScore, 3 players
-#   python run_bronze.py --skip-understat --skip-sofascore   # Skip slow scrapers
-#   python run_bronze.py --fail-fast                 # Abort on first MinIO failure (CI/CD)
-
 import argparse
 import logging
 import sys
@@ -25,41 +5,27 @@ from datetime import datetime
 
 import pandas as pd
 
-# Existing loaders (pre-v16)
 from ingestion.loaders.wikidata_loader             import load_wikidata_bronze
 from ingestion.loaders.statsbomb_loader            import load_statsbomb_bronze
 from ingestion.loaders.fbref_loader                import load_fbref_bronze
 from ingestion.loaders.transfermarkt_loader        import load_transfermarkt_bronze
 
-# New loaders (v16+)
 from ingestion.loaders.understat_loader            import load_understat_bronze
 from ingestion.loaders.transfermarkt_injury_loader import load_injury_bronze
 from ingestion.loaders.fbref_intl_loader           import load_intl_bronze
 
-# v21 addition: local CSV fallback for FBref club stats (Cloudflare bypass
-# workaround). Covers Big-5 leagues only (~24/49) - see module docstring in
-# club_stats_csv_loader.py for exact column coverage and limitations.
 from ingestion.loaders.club_stats_csv_loader        import load_club_stats_csv_bronze
 
-# SofaScore - guarded import (ingestion/loaders/sofascore/client.py currently contains flashscore
-# implementation due to a file naming issue during dev; load_sofascore_bronze
-# may not exist in that file)
 try:
     from ingestion.loaders.sofascore.client import load_sofascore_bronze
 except ImportError:
     load_sofascore_bronze = None
 
-# SofaScore detail (career + season tabs, DOM scrape) - complements
-# ingestion/loaders/sofascore/client.py's __NEXT_DATA__ extraction with season/tournament
-# breakdowns not present there. Migrated from sofatest/sofascore_loader.py.
 try:
     from ingestion.loaders.sofascore.detail_loader import load_sofascore_detail_bronze
 except ImportError:
     load_sofascore_detail_bronze = None
 
-# v18 - FlashScore rating fallback (Source 15, ADR-018 chain)
-# flashscore_loader.py is the canonical file; ingestion/loaders/sofascore/client.py is the fallback
-# in case the file hasn't been copied yet
 try:
     from ingestion.loaders.flashscore_loader import load_flashscore_bronze
 except ImportError:
@@ -93,7 +59,6 @@ Examples:
   python run_bronze.py --skip-sofascore-detail     Skip SofaScore career+season detail (slow DOM scrape)
         """,
     )
-    # ── Source skips ──────────────────────────────────────────────────────────
     p.add_argument("--skip-wikidata",       action="store_true", help="Skip Wikidata loader")
     p.add_argument("--skip-statsbomb",      action="store_true", help="Skip StatsBomb loader")
     p.add_argument("--skip-fbref",          action="store_true", help="Skip FBref club stats loader")
@@ -105,24 +70,14 @@ Examples:
     p.add_argument("--skip-intl",           action="store_true", help="Skip FBref international stats loader")
     p.add_argument("--skip-flashscore",     action="store_true", help="Skip FlashScore ratings loader")
     p.add_argument("--skip-club-stats-csv", action="store_true", help="Skip local CSV club stats loader (Big-5 leagues, Cloudflare-bypass workaround)")
-    # ── Sentiment sources (added 2026-07-22) — OPT-IN, not opt-out ───────────
-    # Unlike every other source above, these default to OFF (must pass
-    # --enable-*) rather than ON-unless-skipped. Reason: all three need
-    # credentials configured in .env first (REDDIT_CLIENT_ID/SECRET,
-    # YOUTUBE_API_KEY, NEWSAPI_KEY) — running them by default on a fresh
-    # checkout would just log warnings and produce no data, and YouTube's
-    # quota cost (100 units/search) is real money-adjacent even on the
-    # free tier if run repeatedly without realizing it's happening.
     p.add_argument("--enable-reddit",  action="store_true", help="Enable Reddit collector (SentimentScore) via Arctic Shift — NO credentials needed (switched from PRAW 2026-07-23, see arctic_shift_collector.py)")
     p.add_argument("--enable-youtube", action="store_true", help="Enable YouTube collector (SentimentScore) — needs YOUTUBE_API_KEY in .env, costs ~4900/10000 daily quota for 49 players")
     p.add_argument("--enable-newsapi", action="store_true", help="Enable NewsAPI collector (SentimentScore) — needs NEWSAPI_KEY in .env, free tier is 100 requests/day")
-    # ── Shortcut: run FlashScore only ─────────────────────────────────────────
     p.add_argument(
         "--only-flashscore",
         action="store_true",
         help="Run FlashScore loader only - skips all other sources. Useful for isolated testing.",
     )
-    # ── Run options ───────────────────────────────────────────────────────────
     p.add_argument(
         "--limit",
         type=int,
@@ -137,7 +92,6 @@ Examples:
             "Use in CI/CD to catch MinIO connectivity issues early."
         ),
     )
-    # ── TEMPORAL CUTOFF FIX (01_temporal_cutoff.md) ─────────────────────────
     p.add_argument(
         "--as-of",
         default=None,
@@ -156,16 +110,14 @@ Examples:
 
 def main() -> None:
     args     = parse_args()
-    run_date = datetime.now().strftime("%Y%m%d_%H%M%S")  # filename timestamp only — real time is fine here
+    run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # TEMPORAL CUTOFF FIX: as_of controls DATA content, defaults to DECISION_DATE.
     from datetime import date as _date_cls
     from config import DECISION_DATE
     as_of_date = _date_cls.fromisoformat(args.as_of) if args.as_of else DECISION_DATE
     as_of_dt   = datetime.combine(as_of_date, datetime.min.time())
     logger.info("as-of (decision-date cutoff): %s", as_of_date.isoformat())
 
-    # --only-flashscore sets all other skips automatically
     if args.only_flashscore:
         args.skip_wikidata      = True
         args.skip_statsbomb     = True
@@ -188,7 +140,6 @@ def main() -> None:
         logger.info("mode       : FlashScore only (--only-flashscore)")
     logger.info("=" * 60)
 
-    # ── Load seed CSV ─────────────────────────────────────────────────────────
     try:
         seed_df = pd.read_csv(SEED_PATH)
     except FileNotFoundError:
@@ -205,7 +156,6 @@ def main() -> None:
 
     results: dict[str, str] = {}
 
-    # ── FIX C-04: _run() wrapper raises on FAILED when --fail-fast is set ────
     def _run(name: str, fn, *fn_args) -> None:
         logger.info(">> Starting %s ...", name)
         try:
@@ -224,7 +174,6 @@ def main() -> None:
                 "Check MinIO connectivity and loader logs above."
             )
 
-    # ── Run loaders ───────────────────────────────────────────────────────────
     if not args.skip_wikidata:
         _run("wikidata",      load_wikidata_bronze,      seed_df, run_date)
     if not args.skip_statsbomb:
@@ -254,13 +203,7 @@ def main() -> None:
     if not args.skip_club_stats_csv:
         _run("club_stats_csv", load_club_stats_csv_bronze, seed_df, run_date)
 
-    # ── Sentiment sources (opt-in, added 2026-07-22) ─────────────────────────
     if args.enable_reddit:
-        # SWITCHED 2026-07-23: reddit_collector.py (PRAW/OAuth) -> arctic_shift_collector.py
-        # (no auth needed) — Reddit's official API closed self-service app
-        # registration in 2026 (Responsible Builder Policy, manual approval,
-        # small projects mostly rejected). Same output contract (bronze/reddit/,
-        # "reddit_texts" field), so nothing downstream needed to change.
         from ingestion.loaders.arctic_shift_collector import load_arctic_shift_bronze
         _run("reddit (via Arctic Shift)", load_arctic_shift_bronze, seed_df, run_date)
     if args.enable_youtube:
@@ -270,7 +213,6 @@ def main() -> None:
         from ingestion.loaders.newsapi_collector import load_newsapi_bronze
         _run("newsapi", load_newsapi_bronze, seed_df, run_date)
 
-    # ── Summary ───────────────────────────────────────────────────────────────
     logger.info("=" * 60)
     logger.info("Bronze ingestion complete - %d sources ran", len(results))
     logger.info("-" * 60)

@@ -1,19 +1,3 @@
-# ingestion/loaders/clubelo_loader.py
-#
-# Source: ClubElo API — http://api.clubelo.com
-# يُوفر Elo rating موضوعي لكل نادٍ بناءً على نتائج تاريخية حقيقية
-#
-# الاستخدام في المشروع:
-#   يُستبدل LEAGUE_DIFFICULTY dict اليدوي في league_quality.py
-#   بأرقام Elo حقيقية: club_elo / big5_avg_elo → difficulty factor
-#
-# API: GET http://api.clubelo.com/YYYY-MM-DD → CSV كامل
-# مجاني، بدون مفتاح API، بدون rate limit صارم
-#
-# خطوة التشغيل:
-#   python run_bronze.py --only-clubelo
-#   أو مباشرة: python -c "from ingestion.loaders.clubelo_loader import load_clubelo_bronze; load_clubelo_bronze()"
-
 import csv
 import io
 import logging
@@ -29,7 +13,7 @@ CLUBELO_URL = "http://api.clubelo.com/{date}"
 BUCKET      = "football-bronze"
 OBJECT_PATH = "clubelo/clubelo_{date}.json"
 
-# أندية لاعبينا الـ 49 — يُستخدم للـ lookup بعد جلب الـ CSV الكامل
+# Clubs for our 49 players — used for lookup after fetching the full CSV
 OUR_CLUBS = [
     "Raja Casablanca", "Al-Hilal", "Paris Saint-Germain", "PSV Eindhoven",
     "Al-Ittihad", "Al Ain", "FAR Rabat", "Olympiacos", "KRC Genk",
@@ -42,16 +26,13 @@ OUR_CLUBS = [
     "Jupiler Pro League", "Botola", "Saudi",
 ]
 
-# Big-5 avg Elo — baseline لحساب الـ difficulty factor
-# محسوب من متوسط أفضل 20 نادٍ في Big-5 (تاريخياً ~1800-1900)
+# Big-5 average Elo — baseline for computing the difficulty factor.
+# Computed from the average of the top 20 Big-5 clubs (historically ~1800-1900).
 BIG5_BASELINE_ELO = 1850.0
 
 
 def _fetch_clubelo_csv(target_date: str) -> list[dict]:
-    """
-    يجلب CSV الكامل من ClubElo API ليوم معين.
-    target_date: 'YYYY-MM-DD'
-    """
+    """Fetches the full CSV from the ClubElo API for a given date ('YYYY-MM-DD')."""
     url = CLUBELO_URL.format(date=target_date)
     req = urllib.request.Request(url, headers={
         "User-Agent": "FootballAtlas/1.0 (research project)",
@@ -76,32 +57,27 @@ def _fetch_clubelo_csv(target_date: str) -> list[dict]:
 
 
 def _match_club(club_name: str, elo_rows: list[dict]) -> dict | None:
-    """
-    يُطابق اسم النادي مع صفوف ClubElo بـ fuzzy matching.
-    """
+    """Matches a club name against ClubElo rows using fuzzy matching."""
     name_lower = club_name.lower()
 
-    # محاولة 1: exact match
+    # Attempt 1: exact match
     for row in elo_rows:
         if row.get("Club", "").lower() == name_lower:
             return row
 
-    # محاولة 2: partial match
+    # Attempt 2: partial match
     for row in elo_rows:
         club = row.get("Club", "").lower()
         if name_lower in club or club in name_lower:
             return row
 
-    # محاولة 3: كلمة أساسية
-    # ⚠️ RISK (flagged 2026-07-21, not fixable without live ClubElo data to
-    # verify against): clubs sharing a >3-char keyword can collide here —
-    # e.g. "Real Betis" and "Real Sociedad" (both in OUR_CLUBS) both
-    # contain "real". This only fires when attempts 1+2 (exact/substring)
-    # both fail, but if it does fire for an ambiguous name, it silently
-    # returns the FIRST matching row, which may be the wrong club. Logged
-    # as a WARNING (not just debug) specifically so this is auditable —
-    # check logs for "keyword fallback" matches before trusting the
-    # resulting league difficulty factors.
+    # Attempt 3: keyword match. Risk: clubs sharing a >3-char keyword can
+    # collide here — e.g. "Real Betis" and "Real Sociedad" both contain
+    # "real". Only fires when attempts 1+2 fail; if it does fire for an
+    # ambiguous name it silently returns the FIRST matching row, which may
+    # be the wrong club. Logged as a WARNING so it's auditable — check
+    # logs for "keyword fallback" matches before trusting the resulting
+    # league difficulty factors.
     keywords = [w for w in name_lower.split() if len(w) > 3]
     for kw in keywords:
         for row in elo_rows:
@@ -118,11 +94,9 @@ def _match_club(club_name: str, elo_rows: list[dict]) -> dict | None:
 
 def compute_difficulty_factor(elo: float, baseline: float = BIG5_BASELINE_ELO) -> float:
     """
-    يحوّل Elo rating إلى difficulty factor بين 0.5 و 1.0.
-    الصيغة: factor = elo / baseline (مع clipping)
-    Big-5 avg (1850) → 1.00
-    Botola (≈1200)   → ~0.65
-    Saudi (≈1600)    → ~0.86
+    Converts an Elo rating into a difficulty factor between 0.5 and 1.0.
+    factor = elo / baseline (clipped). Big-5 avg (1850) → 1.00,
+    Botola (≈1200) → ~0.65, Saudi (≈1600) → ~0.86.
     """
     factor = elo / baseline
     return round(max(0.50, min(1.10, factor)), 3)
@@ -132,10 +106,7 @@ def build_league_quality_from_elo(
     seed_df: pd.DataFrame,
     elo_rows: list[dict],
 ) -> dict[str, float]:
-    """
-    يبني league_quality dict جديد بناءً على Elo حقيقي.
-    يُعيد: {league_name: difficulty_factor}
-    """
+    """Builds a new league_quality dict from real Elo data: {league_name: difficulty_factor}."""
     league_elos: dict[str, list[float]] = {}
 
     for _, row in seed_df.iterrows():
@@ -156,7 +127,6 @@ def build_league_quality_from_elo(
         else:
             logger.warning("ClubElo: no match for club '%s'", club)
 
-    # حساب متوسط Elo لكل دوري
     result = {}
     for league, elos in league_elos.items():
         avg_elo = sum(elos) / len(elos)
@@ -175,21 +145,18 @@ def load_clubelo_bronze(
     run_date: str | None = None,
 ) -> dict:
     """
-    Main entry point.
-    يجلب ClubElo CSV، يحسب difficulty factors للدوريات،
-    يرفع النتيجة إلى MinIO.
+    Fetches the ClubElo CSV, computes league difficulty factors, and
+    uploads the result to MinIO.
 
-    Returns:
-        dict مع: elo_by_club, difficulty_by_league, run_date
+    Returns a dict with: elo_by_club, difficulty_by_league, run_date.
     """
     from clients.minio_client import upload_json
 
     if run_date is None:
-        # TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): the ClubElo snapshot
-        # date IS the data-filtering axis here (it selects which day's Elo
-        # ratings to fetch), so it must default to config.DECISION_DATE —
-        # NOT date.today(). Fetching "today's" Elo would score every club
-        # using ratings from months after the actual decision.
+        # The ClubElo snapshot date is the data-filtering axis here (it
+        # selects which day's Elo ratings to fetch), so it must default to
+        # config.DECISION_DATE — not date.today() — otherwise every club
+        # would be scored using ratings from months after the decision.
         from config import DECISION_DATE
         run_date = DECISION_DATE.isoformat()
 
@@ -197,16 +164,11 @@ def load_clubelo_bronze(
 
     elo_rows = _fetch_clubelo_csv(run_date)
     if not elo_rows:
-        # FIX (found 2026-07-21, verifiable without network access — pure
-        # date-arithmetic bug): the old code was
-        #   date.today().replace(day=date.today().day - 1)
-        # which raises ValueError("day is out of range for month") whenever
-        # today is the 1st of any month (day=0 is invalid). timedelta
-        # handles month/year boundaries correctly in all cases.
-        # TEMPORAL CUTOFF FIX: fallback must be one day before whatever
-        # `run_date` actually was (DECISION_DATE by default), not one day
-        # before today — otherwise a failed fetch silently falls back to
-        # real-time data instead of decision-time data.
+        # Fallback must be one day before whatever run_date actually was
+        # (DECISION_DATE by default), not one day before today — otherwise
+        # a failed fetch silently falls back to real-time data instead of
+        # decision-time data. timedelta also handles month/year boundaries
+        # correctly, unlike naive day-1 arithmetic.
         fallback_date = (date.fromisoformat(run_date) - timedelta(days=1)).isoformat()
         logger.warning("Retrying with day before run_date: %s", fallback_date)
         elo_rows = _fetch_clubelo_csv(fallback_date)
@@ -215,7 +177,6 @@ def load_clubelo_bronze(
         logger.error("ClubElo: no data retrieved — returning empty")
         return {}
 
-    # بناء lookup: club_name → elo
     elo_by_club: dict[str, float] = {}
     for row in elo_rows:
         try:
@@ -223,7 +184,6 @@ def load_clubelo_bronze(
         except (ValueError, TypeError, KeyError):
             pass
 
-    # إذا عندنا seed_df — نحسب difficulty factors
     difficulty_by_league: dict[str, float] = {}
     if seed_df is not None:
         difficulty_by_league = build_league_quality_from_elo(seed_df, elo_rows)
@@ -247,26 +207,19 @@ def load_clubelo_bronze(
 
 def patch_league_quality(clubelo_result: dict, seed_df: "pd.DataFrame | None" = None) -> None:
     """
-    يُحدّث LEAGUE_DIFFICULTY في league_quality.py بالأرقام الجديدة.
-    يُستدعى بعد load_clubelo_bronze() مباشرة.
+    Updates LEAGUE_DIFFICULTY in league_quality.py with the new numbers.
+    Call this right after load_clubelo_bronze():
 
-    الاستخدام:
         result = load_clubelo_bronze(seed_df)
         patch_league_quality(result, seed_df)
 
-    CONFIRMED VIA LIVE DIAGNOSTIC (2026-07-22, diagnose_clubelo_coverage.py):
-    ClubElo's daily feed has ZERO coverage of Botola Pro, Saudi Pro League,
-    UAE Pro League, Egyptian Premier League, and Super League Greece —
-    not a naming/matching issue, these leagues simply aren't in ClubElo's
-    tracked competitions at all. This means the ORIGINAL motivating problem
-    (AUDIT_AND_FIXES.md Fix 1 — Botola Pro GK bias) is NOT solved by
-    --use-clubelo: Botola Pro silently keeps its old hardcoded 0.72
-    estimate every time, because ClubElo has nothing to replace it with.
+    Note: ClubElo's daily feed has zero coverage of Botola Pro, Saudi Pro
+    League, UAE Pro League, Egyptian Premier League, and Super League
+    Greece — these leagues simply aren't among ClubElo's tracked
+    competitions, so they keep their old hardcoded difficulty estimate.
 
-    `seed_df` (optional) lets this function tell you EXACTLY which leagues
-    in YOUR candidate pool were left on the manual estimate, instead of
-    you having to notice a suspiciously-unchanged DSSScore and go
-    detective-work it out (as happened on 2026-07-22, before this fix).
+    `seed_df` (optional) lets this function report exactly which leagues
+    in your candidate pool were left on the manual estimate.
     """
     from analytics.scoring.league_quality import LEAGUE_DIFFICULTY
 

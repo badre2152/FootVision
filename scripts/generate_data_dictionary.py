@@ -1,58 +1,3 @@
-#!/usr/bin/env python3
-# scripts/generate_data_dictionary.py
-# Football Atlas — Gold Column Data Dictionary generator (issue #25,
-# 25_changelog_data_dictionary.md)
-#
-# WHAT THIS DOES
-# ---------------------------------------------------------------------------
-# Reads the LATEST gold/players_scored_*.csv, and for every one of its 200+
-# columns, auto-fills as much of {source, description, coverage,
-# raw_or_derived, used_in} as can be determined mechanically:
-#
-#   - coverage      : ACTUAL non-null % in the latest real Gold run (not a
-#                      guessed "expected" figure — see the #16 age-balance
-#                      spec's own "confirm current coverage" lesson: a prior
-#                      spec document *guessed* 44/49 wiki_dob coverage and
-#                      the real figure turned out to be 49/49. This script
-#                      always measures, never assumes.)
-#   - source         : inferred from the column-name prefix against
-#                       ingestion/loaders/*.py (PREFIX_SOURCE_MAP below), with
-#                       a curated exact-name table for prefix-less columns.
-#   - raw_or_derived : "derived" for _norm columns, composite Score/Index
-#                       columns, and known Gold-time-only columns; "raw"
-#                       otherwise.
-#   - used_in        : every .py file (outside tests/, docs/, __pycache__)
-#                       whose source text contains the column name as a
-#                       whole identifier (word-boundary match — so
-#                       "Gls_per90" does NOT falsely match inside
-#                       "Gls_per90_norm").
-#   - description    : a curated, hand-written table (CURATED_DESCRIPTIONS)
-#                       for the ~90 columns identified as most important
-#                       (identity fields, every column referenced in
-#                       config.py's weight dicts, every Score/Index output).
-#                       Everything else gets an auto-humanized guess from the
-#                       column name AND an explicit "⚠️ needs manual review"
-#                       flag — never a silently-confident-looking guess. This
-#                       is the exact behavior the spec's Acceptance Criteria
-#                       asks for: "even if just 'source: unclear, needs
-#                       investigation' for genuinely orphaned/dead columns."
-#
-# WHAT THIS DELIBERATELY DOES NOT DO
-# ---------------------------------------------------------------------------
-# It does not try to fully automate "description" for every column — many
-# column names (sd_*, fm_*, csv_*) are genuinely ambiguous without reading
-# the source loader, and a confident-looking auto-generated sentence would
-# be worse than an honest "needs manual review" flag (silently wrong
-# documentation is the exact failure mode this spec exists to prevent).
-#
-# USAGE
-#   python scripts/generate_data_dictionary.py
-#   → (re)writes docs/data_dictionary.md
-#
-# Re-run this after any Bronze/Silver/Gold column change so the coverage %
-# and column list stay current — this is intentionally a generated file,
-# not hand-maintained (see its own header once generated).
-
 import re
 import sys
 import glob
@@ -64,16 +9,10 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import config  # noqa: E402  (needs sys.path insert above)
+import config  # noqa: E402
 
 OUTPUT_PATH = PROJECT_ROOT / "docs" / "data_dictionary.md"
 
-# ─────────────────────────────────────────────────────────────────────────
-# Prefix → source name, checked longest-prefix-first so "fbref_gk_" is
-# matched before the shorter "fbref_". Cross-referenced against the actual
-# loader files in ingestion/loaders/ (see that directory's listing) and
-# README.md's pipeline description, not guessed.
-# ─────────────────────────────────────────────────────────────────────────
 PREFIX_SOURCE_MAP: list[tuple[str, str]] = [
     ("fbref_gk_",       "FBref (goalkeeper club stats) — ingestion/loaders/fbref_loader.py"),
     ("fbref_",          "FBref (club stats) — ingestion/loaders/fbref_loader.py / fbref_intl_loader.py"),
@@ -93,8 +32,6 @@ PREFIX_SOURCE_MAP: list[tuple[str, str]] = [
     ("clubelo_",        "ClubElo (optional, --use-clubelo) — ingestion/loaders/clubelo_loader.py"),
 ]
 
-# Exact-name source overrides for columns with no distinguishing prefix, or
-# whose prefix would otherwise be misclassified.
 EXACT_SOURCE_MAP: dict[str, str] = {
     "player_id":            "Silver pipeline merge key (generated)",
     "player_name":          "Seed roster (seeds/) — canonical 49-candidate list",
@@ -126,8 +63,6 @@ EXACT_SOURCE_MAP: dict[str, str] = {
     "sb_mental_data_real":   "StatsBomb — flags whether MentalScore's 3 inputs are real vs. imputed",
 }
 
-# Columns that are Gold-time-only outputs (composite scores, ranks, flags) —
-# never a raw Bronze/Silver source column.
 GOLD_DERIVED_COLUMNS: set[str] = {
     "PerformanceScore", "FormScore", "MentalScore", "AvailabilityScore",
     "InternationalScore", "ChemistryScore", "PressureIndex", "FlexibilityScore",
@@ -138,7 +73,6 @@ GOLD_DERIVED_COLUMNS: set[str] = {
 }
 
 CURATED_DESCRIPTIONS: dict[str, str] = {
-    # ── Identity / roster ───────────────────────────────────────────────
     "player_id": "Internal unique player identifier, generated by the Silver pipeline merge.",
     "player_name": "Player's display name.",
     "position": "Primary position bucket: GK / DEF / MID / FWD.",
@@ -156,8 +90,6 @@ CURATED_DESCRIPTIONS: dict[str, str] = {
     "tm_foot": "Preferred foot.",
     "tm_secondary_positions": "Secondary positions the player can cover, per Transfermarkt — feeds FlexibilityScore.",
     "tm_num_positions": "Count of distinct positions (primary + secondary) — normalized input to FlexibilityScore.",
-
-    # ── Offensive/defensive raw stats (feed OFFENSIVE_WEIGHTS/DEFENSIVE_WEIGHTS) ──
     "Gls_per90": "Club goals per 90 minutes. Input to OFFENSIVE_WEIGHTS (config.py).",
     "Ast_per90": "Club assists per 90 minutes. Input to OFFENSIVE_WEIGHTS.",
     "xg_per90": "Club non-penalty xG per 90 minutes. Input to OFFENSIVE_WEIGHTS and PressureIndex.",
@@ -173,8 +105,6 @@ CURATED_DESCRIPTIONS: dict[str, str] = {
     "offensive_score": "Weighted composite of OFFENSIVE_WEIGHTS sub-columns — feeds PerformanceScore via PERFORMANCE_SUB_WEIGHTS.",
     "defensive_score": "Weighted composite of DEFENSIVE_WEIGHTS sub-columns — feeds PerformanceScore.",
     "form_score": "Weighted composite of FORM_WEIGHTS sub-columns — feeds PerformanceScore.",
-
-    # ── StatsBomb (Mental / Chemistry / Pressure) ──────────────────────
     "sb_matches": "StatsBomb open-data matches available for this player (coverage indicator).",
     "sb_minutes": "StatsBomb open-data minutes played.",
     "sb_passes_per90": "StatsBomb passes per 90 — input to MENTAL_WEIGHTS (composure/distribution proxy).",
@@ -187,8 +117,6 @@ CURATED_DESCRIPTIONS: dict[str, str] = {
     "chem_avg_per90": "Average StatsBomb pairwise pass-network value with current squad-mates — input to ChemistryScore.",
     "chem_num_partners": "Number of squad-mates this player has a real (non-imputed) pairwise chemistry value with.",
     "pressure_delta": "International (StatsBomb) minus club (xg_per90) xG rate. Positive = performs better in big internationals.",
-
-    # ── Understat / SofaScore / FlashScore raw ─────────────────────────
     "understat_npxg_per90": "Understat non-penalty xG per 90.",
     "understat_xa_per90": "Understat xA per 90.",
     "understat_shots_per90": "Understat shots per 90.",
@@ -199,27 +127,19 @@ CURATED_DESCRIPTIONS: dict[str, str] = {
     "flashscore_rating_avg": "FlashScore average match rating (raw, reference only; see rating_final).",
     "flashscore_form_5": "FlashScore rolling 5-match form rating (raw, reference only; see form_final).",
     "flashscore_matches_rated": "Number of FlashScore-rated matches this season (coverage indicator).",
-
-    # ── Injury / availability ───────────────────────────────────────────
     "inj_count_2y": "Number of distinct injuries in the last 2 years (Transfermarkt). Input to AvailabilityScore (inverse).",
     "inj_days_missed_2y": "Total days missed to injury in the last 2 years. Input to AvailabilityScore (inverse).",
     "inj_last_type": "Most recent injury type.",
     "inj_last_date": "Date of the most recent injury.",
-
-    # ── International ───────────────────────────────────────────────────
     "intl_caps": "International caps. Input to InternationalScore.",
     "intl_minutes_total": "Total international minutes played.",
     "intl_goals_total": "Total international goals.",
     "intl_ast_total": "Total international assists.",
     "intl_goals_per90": "International goals per 90. Input to InternationalScore.",
     "intl_ast_per90": "International assists per 90. Input to InternationalScore.",
-
-    # ── Sentiment ─────────────────────────────────────────────────────
     "sentiment_texts": "Raw collected text snippets (Reddit/YouTube/NewsAPI) used for sentiment scoring.",
     "sentiment_text_count": "Number of text snippets collected for this player (coverage indicator).",
     "sentiment_raw": "Aggregated NLP sentiment score in [0, 1] before becoming SentimentScore.",
-
-    # ── Gold-time composite outputs ─────────────────────────────────────
     "PerformanceScore": "Composite: offensive_score, defensive_score, form_score (PERFORMANCE_SUB_WEIGHTS). Top-level DSSScore component.",
     "FormScore": "Composite of form_final/rating_final (FORM_WEIGHTS). Top-level DSSScore component.",
     "MentalScore": "Composite of StatsBomb mental proxies (MENTAL_WEIGHTS), 11/49 real + 38/49 position-median imputed. Top-level DSSScore component.",
@@ -241,8 +161,6 @@ CURATED_DESCRIPTIONS: dict[str, str] = {
     "ga_imputed_flag": "Flag indicating GA_per90 (goals-against) was imputed rather than a real value (goalkeepers only).",
 }
 
-# ─────────────────────────────────────────────────────────────────────────
-
 
 def load_latest_players_scored() -> tuple[pd.DataFrame, str]:
     files = sorted(glob.glob(str(PROJECT_ROOT / "gold" / "players_scored_*.csv")))
@@ -256,7 +174,6 @@ def load_latest_players_scored() -> tuple[pd.DataFrame, str]:
 
 
 def classify_source(col: str) -> tuple[str, bool]:
-    """Returns (source_description, was_auto_classified_with_confidence)."""
     if col in EXACT_SOURCE_MAP:
         return EXACT_SOURCE_MAP[col], True
     for prefix, source in PREFIX_SOURCE_MAP:
@@ -278,18 +195,11 @@ def classify_raw_or_derived(col: str) -> str:
 
 
 def humanize_column_name(col: str) -> str:
-    """Best-effort, non-authoritative guess at what a column means, purely
-    from its name — always paired with the manual-review flag, never
-    presented as a confident description."""
     words = re.sub(r"([a-z])([A-Z])", r"\1 \2", col).replace("_", " ")
     return words.strip().capitalize()
 
 
 def build_used_in_index(root: Path) -> dict[str, str]:
-    """Reads every .py file under the project (excluding tests/, docs/,
-    __pycache__, and this script itself) once, so per-column lookups are
-    just a regex search against already-loaded text instead of 200+ re-reads
-    of the whole tree."""
     index: dict[str, str] = {}
     exclude_dirs = {"__pycache__", ".git", "tests", "docs", "logs", "bronze", "silver", "gold", "data", "seeds"}
     for path in root.rglob("*.py"):

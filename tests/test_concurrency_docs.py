@@ -1,13 +1,3 @@
-# tests/test_concurrency_docs.py
-#
-# Regression test for 21_concurrency_docs.md — a documentation-only spec,
-# so this is deliberately light: it just proves the documentation exists
-# and is actually cross-referenced from where the spec's Acceptance
-# Criteria say a contributor would look, so a future edit can't silently
-# delete docs/architecture.md or the README pointer to it without a test
-# noticing (same "fixes keep disappearing" concern as everything else in
-# CHANGELOG.md).
-
 import os
 import sys
 from pathlib import Path

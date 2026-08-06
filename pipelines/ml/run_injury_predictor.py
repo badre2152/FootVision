@@ -1,21 +1,3 @@
-#!/usr/bin/env python
-# run_injury_predictor.py — Football DSS ML Layer — Injury Risk Index
-#
-# Standalone, like run_selection_audit.py — not wired into run_gold.py.
-# InjuryRiskScore must NEVER be added into DSSScore or squad_summary
-# selection logic — AvailabilityScore already consumes inj_count_2y /
-# inj_days_missed_2y inside DSSScore (composite weight 0.0795). This is a
-# separate advisory panel for medical/coaching staff. See
-# analytics/ml/injury_predictor.py's module docstring for the full
-# rationale, including why this replaced an earlier LOOCV ML attempt
-# (analytics/ml/injury_risk.py, removed 2026-07-29 — its 0.61 accuracy was
-# too close to a 0.51 majority-class baseline to trust, and looking
-# "trained" invited more confidence than a near-random result deserves).
-#
-# Run AFTER run_gold.py:
-#   python run_injury_predictor.py
-#   python run_injury_predictor.py --reference-date 2026-06-01
-
 import argparse
 import glob
 import json

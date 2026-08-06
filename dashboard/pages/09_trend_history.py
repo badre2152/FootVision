@@ -1,25 +1,3 @@
-# dashboard/pages/09_trend_history.py
-# Football Atlas — Historical Trend View page
-#
-# Added 2026-08-01 — spec "18_historical_trend_view.md" (#18).
-#
-# Surfaces the player-development-over-time signal that was already
-# sitting unused on disk: every past run_gold.py run leaves its own
-# gold/players_scored_YYYYMMDD_HHMMSS.csv snapshot behind, but every other
-# page only ever reads the single latest one (see data_loader.py's
-# load_latest_players_scored()). This page reads ALL of them via
-# load_all_players_scored_history() so a player's DSSScore/Rank trajectory
-# across the prep window is visible, plus a squad-level "biggest movers"
-# table between the two most recent runs.
-#
-# DECISION_DATE / spec #1: 01_temporal_cutoff.md IS now implemented (see
-# config.py § 0 and dashboard/data_loader.py's _is_run_cutoff_enforced()).
-# Snapshots generated before that fix landed are still flagged via
-# is_pre_cutoff_fix (read from each run's squad_summary_*.json —
-# decision_date_enforced), and pre_cutoff_fix_banner() below only renders
-# when at least one currently-selected snapshot is actually flagged that
-# way — not unconditionally.
-
 import sys
 from pathlib import Path
 
@@ -39,7 +17,7 @@ from dashboard.components import pre_cutoff_fix_banner
 from dashboard.report_utils import csv_download_button
 
 st.set_page_config(page_title="Football Atlas — Historical Trend View", page_icon="📈", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("📈 Historical Trend View")
 st.caption(
@@ -73,7 +51,6 @@ if history.empty:
 
 st.divider()
 
-# ── Player selector + DSSScore/Rank trend ───────────────────────────────
 st.subheader("Player trend")
 
 latest_run = history["run_date"].max()
@@ -108,7 +85,7 @@ fig = px.line(
     title=f"{player_name} — {selected_metric} over time ({n_snapshots} snapshot{'s' if n_snapshots != 1 else ''})",
 )
 if selected_metric == "Rank":
-    fig.update_yaxes(autorange="reversed")  # Rank #1 is best — show it at the top
+    fig.update_yaxes(autorange="reversed")
 fig.update_layout(height=420, margin=dict(t=50, b=30))
 st.plotly_chart(fig, width='stretch')
 
@@ -122,7 +99,6 @@ with st.expander("Raw snapshot values for this player"):
 
 st.divider()
 
-# ── Squad-level "biggest movers" ─────────────────────────────────────────
 st.subheader("Biggest movers")
 st.caption("Largest Rank changes between the two most recent snapshots (up or down).")
 

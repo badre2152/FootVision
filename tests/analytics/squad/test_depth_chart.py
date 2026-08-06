@@ -1,16 +1,3 @@
-# tests/test_depth_chart.py
-#
-# Test suite for analytics/depth_chart.py (10_depth_chart.md).
-# Unit tests against small synthetic DataFrames, no network/MinIO/Gold run
-# required — mirrors tests/test_injury_predictor.py's style.
-#
-# Covers, per 10_depth_chart.md's Acceptance Criteria:
-#   - normal case
-#   - position with no depth left (thin/exhausted pool)
-#   - a flexible player counted correctly for two positions
-# plus the Edge Cases section explicitly: honest "thin depth" messaging,
-# and a replacement that outscores the incumbent being flagged, not hidden.
-
 import sys
 import os
 
@@ -45,10 +32,6 @@ def _df(*rows):
     return pd.DataFrame(list(rows))
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# parse_secondary_position_buckets()
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestParseSecondaryPositionBuckets:
 
     def test_empty_and_missing_input(self):
@@ -61,8 +44,6 @@ class TestParseSecondaryPositionBuckets:
         assert parse_secondary_position_buckets("Right-Back") == ["DEF"]
 
     def test_multiple_labels_deduplicated(self):
-        # "Right Midfield" and "Central Midfield" both bucket to MID —
-        # must appear once, not twice.
         result = parse_secondary_position_buckets("Right Midfield, Central Midfield")
         assert result == ["MID"]
 
@@ -71,9 +52,6 @@ class TestParseSecondaryPositionBuckets:
         assert result == ["MID", "DEF"]
 
     def test_unrecognized_label_skipped_not_guessed(self):
-        # "Deep-Lying Playmaker" isn't a real TM label used in this
-        # project's data, but must not crash or be silently invented into
-        # a bucket — it should just be dropped.
         result = parse_secondary_position_buckets("Deep-Lying Playmaker, Right-Back")
         assert result == ["DEF"]
 
@@ -86,11 +64,6 @@ class TestParseSecondaryPositionBuckets:
         assert set(POSITION_BUCKET_MAP.values()) <= set(POSITIONS)
 
     def test_real_project_labels_all_resolve(self):
-        # Every distinct label actually observed in this project's real
-        # tm_secondary_positions Bronze data (see analytics/depth_chart.py
-        # module header) — this test is the regression guard if that
-        # observed set ever changes and POSITION_BUCKET_MAP isn't updated
-        # alongside it.
         real_labels = [
             "Right Midfield", "Left-Back", "Centre-Back", "Central Midfield",
             "Left Midfield", "Left Winger", "Right-Back", "Sweeper",
@@ -101,10 +74,6 @@ class TestParseSecondaryPositionBuckets:
             buckets = parse_secondary_position_buckets(label)
             assert buckets, f"{label!r} did not resolve to any bucket"
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# get_replacement_candidates() — normal case
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestNormalCase:
 
@@ -138,7 +107,7 @@ class TestNormalCase:
     def test_excludes_currently_selected_players_from_pool(self):
         df = _df(
             _player("P001", "Incumbent", "MID", 0.80),
-            _player("P002", "Other selected MID", "MID", 0.95),  # selected — must NOT appear
+            _player("P002", "Other selected MID", "MID", 0.95),
             _player("P003", "Bench MID", "MID", 0.60),
         )
         selected = {"P001", "P002"}
@@ -160,16 +129,9 @@ class TestNormalCase:
         assert "not found" in result.message.lower()
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Edge case — position with no depth left
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestThinOrExhaustedDepth:
 
     def test_position_group_fully_exhausted_returns_honest_message(self):
-        # All 3 GKs in the entire candidate pool are already selected —
-        # zero remain as replacements. GK edge case explicitly called out
-        # in 10_depth_chart.md's Edge Cases (small position group).
         df = _df(
             _player("P001", "GK A", "GK", 0.9),
             _player("P002", "GK B", "GK", 0.8),
@@ -185,9 +147,6 @@ class TestThinOrExhaustedDepth:
         assert "exhausted" in result.message.lower()
 
     def test_thin_depth_returns_fewer_than_requested_with_explicit_message(self):
-        # Only 1 replacement candidate exists, but top_n=3 was requested —
-        # must return the 1 it has AND say so explicitly, never silently
-        # truncate with no explanation (spec's Edge Cases requirement).
         df = _df(
             _player("P001", "Incumbent", "GK", 0.9),
             _player("P002", "Only bench GK", "GK", 0.5),
@@ -201,14 +160,9 @@ class TestThinOrExhaustedDepth:
         assert "1/3" in result.message
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Edge case — a flexible player counted correctly for two positions
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestFlexiblePlayerCountedForTwoPositions:
 
     def test_secondary_position_candidate_appears_for_the_secondary_position(self):
-        # Hakimi-style player: primary DEF, secondary includes a MID label.
         df = _df(
             _player("P001", "MID Incumbent", "MID", 0.85),
             _player(
@@ -220,13 +174,10 @@ class TestFlexiblePlayerCountedForTwoPositions:
         assert len(result.candidates) == 1
         c = result.candidates[0]
         assert c.player_id == "P002"
-        assert c.position == "DEF"          # candidate's own primary position, unchanged
+        assert c.position == "DEF"
         assert c.via_secondary_position is True
 
     def test_flexible_player_appears_as_primary_match_for_own_position_too(self):
-        # The SAME versatile player must also show up as a normal
-        # (non-secondary) DEF replacement candidate — proving they're
-        # correctly counted for BOTH positions, not consumed by one.
         df = _df(
             _player("P001", "DEF Incumbent", "DEF", 0.85),
             _player(
@@ -238,7 +189,7 @@ class TestFlexiblePlayerCountedForTwoPositions:
         assert len(result.candidates) == 1
         c = result.candidates[0]
         assert c.player_id == "P002"
-        assert c.via_secondary_position is False  # primary-position match here, not secondary
+        assert c.via_secondary_position is False
 
     def test_primary_match_and_secondary_match_can_both_appear_ranked_together(self):
         df = _df(
@@ -251,16 +202,12 @@ class TestFlexiblePlayerCountedForTwoPositions:
         )
         result = get_replacement_candidates(df, {"P001"}, "P001", top_n=3)
         ids = [c.player_id for c in result.candidates]
-        # Ranked purely by DSSScore — the versatile DEF (0.75) outranks
-        # the weaker primary-MID bench player (0.60).
         assert ids == ["P003", "P002"]
         by_id = {c.player_id: c for c in result.candidates}
         assert by_id["P003"].via_secondary_position is True
         assert by_id["P002"].via_secondary_position is False
 
     def test_missing_tm_secondary_positions_column_does_not_crash(self):
-        # Older Gold runs may not have this column at all — must degrade
-        # gracefully to primary-position-only matching, not raise.
         df = _df(
             _player("P001", "Incumbent", "DEF", 0.85),
             _player("P002", "Bench DEF", "DEF", 0.60),
@@ -269,10 +216,6 @@ class TestFlexiblePlayerCountedForTwoPositions:
         result = get_replacement_candidates(df, {"P001"}, "P001", top_n=3)
         assert [c.player_id for c in result.candidates] == ["P002"]
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# Edge case — replacement stronger than incumbent must be flagged, not hidden
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestStrongerThanIncumbentFlag:
 
@@ -302,10 +245,6 @@ class TestStrongerThanIncumbentFlag:
         assert result.message is None
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# get_replacement_candidates_for_position() — bare-position mode
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestGetReplacementCandidatesForPosition:
 
     def test_ranks_pool_with_no_specific_incumbent(self):
@@ -317,7 +256,7 @@ class TestGetReplacementCandidatesForPosition:
         result = get_replacement_candidates_for_position(df, {"P001"}, "MID", top_n=2)
         assert result.target_player_id is None
         assert [c.player_id for c in result.candidates] == ["P003", "P002"]
-        assert result.incumbent_DSSScore == pytest.approx(0.80)  # top candidate's own score
+        assert result.incumbent_DSSScore == pytest.approx(0.80)
 
     def test_unknown_position_string_returns_explanatory_message(self):
         df = _df(_player("P001", "A", "GK", 0.5))

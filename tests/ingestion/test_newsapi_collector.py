@@ -1,11 +1,3 @@
-# tests/test_newsapi_collector.py
-#
-# Tests ingestion/loaders/newsapi_collector.py's collection logic using
-# MOCKED requests responses — no live network calls (newsapi.org is not
-# reachable from this environment). Validates request-building,
-# response-parsing, and error handling against NewsAPI's documented
-# response shape.
-
 import sys
 import os
 from unittest.mock import MagicMock, patch
@@ -23,7 +15,6 @@ from ingestion.loaders.newsapi_collector import (
 
 
 def _make_ok_response(articles):
-    """articles: list of (title, description) tuples"""
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
     mock_resp.json.return_value = {
@@ -48,7 +39,7 @@ class TestCollectPlayerArticles:
     def test_extracts_titles_and_descriptions(self):
         mock_resp = _make_ok_response([
             ("Hakimi scores again", "Hakimi was the standout performer today"),
-            ("Morocco squad announced, Hakimi included", None),  # some articles lack a description
+            ("Morocco squad announced, Hakimi included", None),
         ])
         with patch("ingestion.loaders.newsapi_collector.requests.get", return_value=mock_resp):
             texts = _collect_player_articles("fake-key", "Achraf Hakimi")
@@ -56,18 +47,9 @@ class TestCollectPlayerArticles:
         assert "Hakimi scores again" in texts
         assert "Hakimi was the standout performer today" in texts
         assert "Morocco squad announced, Hakimi included" in texts
-        assert len(texts) == 3  # 2 titles + 1 description (None skipped)
+        assert len(texts) == 3
 
     def test_filters_articles_not_actually_mentioning_player(self):
-        """
-        REGRESSION TEST for the real bug found via live data inspection
-        (2026-07-24): NewsAPI's search matches a player's name anywhere in
-        the FULL article, not necessarily in the title/description we
-        extract. A real run showed generic match-preview articles ("How to
-        watch France vs Morocco", "Canada vs Morocco projected lineups")
-        appearing in a specific player's collected texts, diluting genuine
-        sentiment with neutral/factual content unrelated to him personally.
-        """
         mock_resp = _make_ok_response([
             ("How to watch France vs Morocco: Free Streams, TV Channels", "Kick-off time for the quarterfinal"),
             ("Hakimi named Man of the Match", "Hakimi delivered a standout performance for PSG"),
@@ -81,7 +63,6 @@ class TestCollectPlayerArticles:
         assert "Hakimi delivered a standout performance for PSG" in texts
 
     def test_api_error_status_returns_empty_list(self):
-        """NewsAPI's own error format ({"status": "error", ...}) must not crash."""
         with patch("ingestion.loaders.newsapi_collector.requests.get", return_value=_make_error_response()):
             texts = _collect_player_articles("bad-key", "Some Player")
         assert texts == []
@@ -105,7 +86,6 @@ class TestCollectPlayerArticles:
         assert texts == []
 
     def test_query_includes_player_name_and_football_context(self):
-        """Confirms the actual request params sent match what the docstring documents."""
         mock_resp = _make_ok_response([])
         with patch("ingestion.loaders.newsapi_collector.requests.get", return_value=mock_resp) as mock_get:
             _collect_player_articles("my-key", "Youssef En-Nesyri")
@@ -116,13 +96,6 @@ class TestCollectPlayerArticles:
         assert call_kwargs["params"]["apiKey"] == "my-key"
 
     def test_temporal_cutoff_to_param_defaults_to_decision_date(self):
-        """
-        TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): before this fix, this
-        request had NO date bound at all — a live run could pull in
-        coverage from any point in time, including well after the actual
-        decision date, straight into SentimentScore. Confirms `to` is now
-        always sent, defaulting to config.DECISION_DATE.
-        """
         from config import DECISION_DATE
 
         mock_resp = _make_ok_response([])
@@ -177,7 +150,6 @@ class TestLoadNewsapiBronze:
         assert "1/2" in status
 
     def test_warns_when_over_100_players(self, monkeypatch, caplog):
-        """Free tier caps at 100 requests/day — must warn, not silently fail partway."""
         monkeypatch.setenv("NEWSAPI_KEY", "fake-key")
         seed = pd.DataFrame({
             "player_id": [f"P{i:03d}" for i in range(101)],

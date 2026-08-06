@@ -1,8 +1,3 @@
-# clients/minio_mock.py
-# Local filesystem mock for MinIO — used when no MinIO server is available.
-# Stores objects as files under /tmp/football_bronze_mock/<bucket>/<object>
-# Drop-in replacement for clients/minio_client.py in local dev mode.
-
 import json
 import logging
 import os
@@ -35,7 +30,6 @@ def read_latest_json(bucket: str, prefix: str):
         base = MOCK_ROOT / bucket / prefix.rstrip("/")
         if not base.exists():
             return None
-        # Find all json files under prefix, pick latest by name
         files = sorted(base.rglob("*.json"), key=lambda f: f.name, reverse=True)
         if not files:
             return None

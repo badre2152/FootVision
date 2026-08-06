@@ -1,8 +1,3 @@
-# tests/test_peak_detector.py
-#
-# Test suite for analytics/peak_detector.py — Peak/Rising/Declining trend
-# detector based on real multi-season sofascore_detail_career data.
-
 import sys
 import os
 
@@ -34,10 +29,6 @@ def _row(career, position="MID", player_name="Test"):
     return {"player_name": player_name, "position": position, "sofascore_detail_career": career}
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Season label parsing / filtering
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestSeasonParsing:
     def test_parse_two_digit_season(self):
         assert _parse_season_start_year("24/25") == 2024
@@ -54,7 +45,7 @@ class TestSeasonParsing:
         assert seasons[0]["label"] == "24/25"
 
     def test_extract_drops_national_team_year_entries(self):
-        career = [_season("24/25", gls=5), _season("2025", gls=1)]  # national-team style, no "/"
+        career = [_season("24/25", gls=5), _season("2025", gls=1)]
         seasons = _extract_club_seasons(career)
         assert len(seasons) == 1
         assert seasons[0]["label"] == "24/25"
@@ -71,17 +62,13 @@ class TestSeasonParsing:
         assert _extract_club_seasons(np.nan) == []
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Quality proxy
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestQualityProxy:
     def test_outfield_uses_goals_plus_assists_per_90(self):
-        s = _season("24/25", minutes=900, gls=5, ast=5)  # 10 contributions / 900 min * 90 = 1.0
+        s = _season("24/25", minutes=900, gls=5, ast=5)
         assert _quality_proxy(s, "MID") == pytest.approx(1.0)
 
     def test_gk_uses_negative_conceded_per_90(self):
-        s = _season("24/25", minutes=900, gc=10)  # -10/900*90 = -1.0
+        s = _season("24/25", minutes=900, gc=10)
         assert _quality_proxy(s, "GK") == pytest.approx(-1.0)
 
     def test_low_minutes_season_excluded(self):
@@ -97,16 +84,9 @@ class TestQualityProxy:
         assert _quality_proxy(s, "MID") is None
 
     def test_outfield_zero_is_a_real_zero_not_excluded(self):
-        # a pure defensive player really can have 0 goals AND 0 assists —
-        # that's a real data point, not missing data, as long as at least
-        # one of GLS/AST is explicitly present (not both None)
         s = _season("24/25", minutes=900, gls=0.0, ast=None)
         assert _quality_proxy(s, "MID") == 0.0
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# Trend classification
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestClassifyTrend:
     def test_insufficient_with_zero_seasons(self):
@@ -133,17 +113,9 @@ class TestClassifyTrend:
         assert label == "Peak"
 
     def test_flat_low_relative_to_own_history_is_stable(self):
-        # zero net slope over 3 seasons (dip then recovery to the SAME
-        # level, not the peak) and NOT near this player's own best season
-        # -> Stable, not Declining (which requires a real net downward
-        # slope) and not Peak (latest season isn't near the season-2 peak)
         label, slope = _classify_trend([0.5, 0.9, 0.5])
         assert label == "Stable"
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# compute_peak_decline() — end to end
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestComputePeakDecline:
     def test_missing_required_columns_raises(self):
@@ -187,14 +159,14 @@ class TestComputePeakDecline:
 
     def test_n_seasons_parameter_limits_window(self):
         career = [
-            _season("18/19", minutes=2000, gls=0, ast=0),   # would look "Rising" if included
+            _season("18/19", minutes=2000, gls=0, ast=0),
             _season("22/23", minutes=2000, gls=5, ast=5),
             _season("23/24", minutes=2000, gls=5, ast=5),
             _season("24/25", minutes=2000, gls=5, ast=5),
         ]
         df = pd.DataFrame([_row(career, position="MID")])
         result = compute_peak_decline(df, n_seasons=3)
-        assert result.df.iloc[0]["seasons_used"] == 3  # 18/19 correctly excluded
+        assert result.df.iloc[0]["seasons_used"] == 3
 
     def test_row_count_and_columns_preserved(self):
         df = pd.DataFrame([_row(None), _row([_season("24/25", minutes=2000, gls=1, ast=1)])])

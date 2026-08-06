@@ -1,15 +1,3 @@
-# tests/test_arctic_shift_collector.py
-#
-# Tests ingestion/loaders/arctic_shift_collector.py using MOCKED requests
-# responses. Unlike other collectors this session, the mocked response
-# shape here is copied from a REAL live API call made during development
-# (GET .../api/posts/search?subreddit=worldnews&title=wuhan&limit=10 ->
-# real {"data": [{"title": ..., "selftext": ..., "id": ..., "num_comments":
-# ...}]}) — so these tests validate against verified real schema, not a
-# guessed one. What's still not covered by these tests: actual result
-# relevance for real player-name queries (impossible to test without
-# live calls per player).
-
 import sys
 import os
 from unittest.mock import patch, MagicMock
@@ -43,11 +31,6 @@ def _make_response(json_data, status_ok=True):
 class TestSearchPosts:
 
     def test_parses_real_verified_response_shape(self):
-        """
-        This exact {"data": [...]} shape with title/selftext/id/num_comments
-        fields was confirmed against the REAL live API during this
-        session (2026-07-23) — not guessed.
-        """
         real_shaped_response = {
             "data": [
                 {"title": "Hakimi scores again", "selftext": "", "id": "abc123", "num_comments": 5},
@@ -81,10 +64,6 @@ class TestSearchPosts:
         assert posts == []
 
     def test_no_auth_headers_or_params_sent(self):
-        """
-        Confirms this collector genuinely sends no credentials — a key
-        advantage over the retired PRAW-based reddit_collector.py.
-        """
         with patch("ingestion.loaders.arctic_shift_collector.requests.get",
                    return_value=_make_response({"data": []})) as mock_get:
             _search_posts("soccer", "Player")
@@ -95,10 +74,6 @@ class TestSearchPosts:
         assert "client_id" not in call_kwargs.get("params", {})
 
     def test_before_param_passed_through_when_given(self):
-        """
-        TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): before this fix,
-        _search_posts() had NO date bound param at all.
-        """
         with patch("ingestion.loaders.arctic_shift_collector.requests.get",
                    return_value=_make_response({"data": []})) as mock_get:
             _search_posts("soccer", "Player", before_ts=1780000000)
@@ -106,7 +81,6 @@ class TestSearchPosts:
         assert mock_get.call_args.kwargs["params"]["before"] == 1780000000
 
     def test_no_before_param_when_not_given(self):
-        """Backward-compatible default: no before_ts → no `before` param sent."""
         with patch("ingestion.loaders.arctic_shift_collector.requests.get",
                    return_value=_make_response({"data": []})) as mock_get:
             _search_posts("soccer", "Player")
@@ -115,13 +89,6 @@ class TestSearchPosts:
 
 
 class TestCollectPlayerTextsTemporalCutoff:
-    """
-    TEMPORAL CUTOFF FIX (01_temporal_cutoff.md): _collect_player_texts()
-    must convert as_of into a Unix `before` timestamp and pass it to BOTH
-    _search_posts() and _search_comments() — a post from before the
-    cutoff can still pick up new comments after it, so the comment fetch
-    needs its own bound too, not just the post fetch.
-    """
 
     def test_before_ts_reaches_search_posts_and_defaults_to_decision_date(self):
         from config import DECISION_DATE
@@ -153,16 +120,10 @@ class TestCollectPlayerTextsTemporalCutoff:
 
 
 class TestIsBotOrRemoved:
-    """
-    Tests for the fix added 2026-07-23 after live testing surfaced real
-    AutoModerator noise in results: "Your post has been removed under the
-    Submission Guidelines: Shitposting" was showing up as if it were fan
-    sentiment about a player.
-    """
 
     def test_detects_automoderator_author(self):
         assert _is_bot_or_removed("some text", "AutoModerator") is True
-        assert _is_bot_or_removed("some text", "automoderator") is True  # case-insensitive
+        assert _is_bot_or_removed("some text", "automoderator") is True
 
     def test_detects_removal_message_text(self):
         real_bot_text = "Your post has been removed under the Submission Guidelines: Shitposting"
@@ -173,21 +134,12 @@ class TestIsBotOrRemoved:
 
 
 class TestMentionsPlayer:
-    """
-    Tests for the KEY fix added 2026-07-23: a real live test found that
-    Arctic Shift's post search for "Achraf Hakimi" matched a World Cup
-    megathread where his name appeared once, but the megathread's own top
-    comments were entirely about a DIFFERENT topic (Messi) — polluting
-    real results. These tests use the EXACT irrelevant text found live.
-    """
 
     def test_real_irrelevant_comment_is_filtered_for_hakimi(self):
-        """The exact real noise found live on 2026-07-23."""
         messi_comment = "Messi today against England: 2 assists 1 shot 94 touches 9 successful dribbles"
         assert _mentions_player(messi_comment, "Achraf Hakimi") is False
 
     def test_real_irrelevant_comment_is_filtered_for_en_nesyri(self):
-        """Also exact real noise found live — generic argument, no football content at all."""
         assert _mentions_player("Didn't age well", "Youssef En-Nesyri") is False
         assert _mentions_player(
             "So you have 0 argument, you proved it already, just handwaving",
@@ -198,7 +150,6 @@ class TestMentionsPlayer:
         assert _mentions_player("Achraf Hakimi was incredible today", "Achraf Hakimi") is True
 
     def test_surname_only_mention_is_kept(self):
-        """Fans commonly say just the surname — must not require the full name."""
         assert _mentions_player("Hakimi was incredible today, best defender", "Achraf Hakimi") is True
 
     def test_case_insensitive(self):
@@ -221,12 +172,6 @@ class TestSearchComments:
         assert comments == []
 
     def test_requests_author_field_for_bot_filtering(self):
-        """
-        REGRESSION TEST: the comment search must request the 'author'
-        field (needed for _is_bot_or_removed) — the original version only
-        requested 'body', which would make bot-detection-by-author
-        impossible.
-        """
         with patch("ingestion.loaders.arctic_shift_collector.requests.get",
                    return_value=_make_response({"data": []})) as mock_get:
             _search_comments("abc123")
@@ -247,11 +192,11 @@ class TestCollectPlayerTexts:
             return _make_response({"data": []})
 
         with patch("ingestion.loaders.arctic_shift_collector.requests.get", side_effect=fake_get), \
-             patch("ingestion.loaders.arctic_shift_collector.time.sleep"):  # skip real delays in tests
+             patch("ingestion.loaders.arctic_shift_collector.time.sleep"):
             texts = _collect_player_texts("Achraf Hakimi")
 
         from ingestion.loaders.arctic_shift_collector import SUBREDDITS
-        assert len(texts) == len(SUBREDDITS)  # one post title per subreddit
+        assert len(texts) == len(SUBREDDITS)
 
     def test_skips_deleted_and_removed_content(self):
         def fake_get(url, params, timeout):
@@ -274,12 +219,6 @@ class TestCollectPlayerTexts:
         assert "Some Player was amazing today" in texts
 
     def test_title_not_mentioning_player_is_filtered(self):
-        """
-        REGRESSION TEST for the round-2 precision fix (2026-07-24): a live
-        test found a post search for "Achraf Hakimi" whose SELFTEXT was
-        entirely about Messi — titles/selftext are no longer automatically
-        trusted just because the post matched the search.
-        """
         def fake_get(url, params, timeout):
             if "posts/search" in url:
                 return _make_response({"data": [
@@ -294,14 +233,6 @@ class TestCollectPlayerTexts:
         assert texts == []
 
     def test_integration_filters_real_world_noise_pattern(self):
-        """
-        INTEGRATION TEST reproducing the EXACT scenario found in live
-        testing on 2026-07-23: a post search for "Achraf Hakimi" matches a
-        megathread post, but that post's top comments are noise (an
-        AutoModerator message and an unrelated Messi comment) — neither
-        should end up in the final texts, while the post's own title
-        (which DID match the search) is kept.
-        """
         def fake_get(url, params, timeout):
             if "posts/search" in url:
                 return _make_response({"data": [
@@ -317,9 +248,7 @@ class TestCollectPlayerTexts:
              patch("ingestion.loaders.arctic_shift_collector.time.sleep"):
             texts = _collect_player_texts("Achraf Hakimi")
 
-        # Title kept (came from a genuine name-matched search result)
         assert any("Hakimi ready to start" in t for t in texts)
-        # Neither noise comment made it through
         assert not any("Submission Guidelines" in t for t in texts)
         assert not any("Messi" in t for t in texts)
 
@@ -339,12 +268,6 @@ class TestLoadArcticShiftBronze:
             load_arctic_shift_bronze(bad_seed, run_date="TEST")
 
     def test_writes_to_same_folder_as_retired_reddit_collector(self):
-        """
-        REGRESSION-GUARDING TEST: this collector must write to
-        bronze/reddit/players_reddit_*.json (SAME path as the retired
-        reddit_collector.py) so silver_pipeline.py's join_sentiment_texts()
-        picks it up with zero changes needed there.
-        """
         seed = pd.DataFrame({"player_id": ["P001"], "player_name": ["Player A"]})
 
         with patch("ingestion.loaders.arctic_shift_collector.upload_json", return_value=True) as mock_upload, \
@@ -356,7 +279,6 @@ class TestLoadArcticShiftBronze:
         assert object_name == "reddit/players_reddit_TEST.json"
 
     def test_uses_same_field_name_as_retired_reddit_collector(self):
-        """Field must be 'reddit_texts', not 'arctic_shift_texts' or similar."""
         seed = pd.DataFrame({"player_id": ["P001"], "player_name": ["Popular Player"]})
 
         with patch("ingestion.loaders.arctic_shift_collector.upload_json", return_value=True) as mock_upload, \

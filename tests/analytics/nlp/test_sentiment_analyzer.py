@@ -1,13 +1,3 @@
-# tests/test_sentiment_analyzer.py
-#
-# Tests analytics/nlp/sentiment_analyzer.py.
-#
-# Language detection and label normalization are tested for REAL (no
-# mocking needed — langdetect runs offline, normalize_label is pure
-# string/math logic). The actual transformers model loading/inference is
-# MOCKED throughout — see the module's own docstring for why (no
-# huggingface.co access, no local GPU/torch runtime in this sandbox).
-
 import sys
 import os
 from unittest.mock import patch, MagicMock
@@ -25,10 +15,6 @@ from analytics.nlp.sentiment_analyzer import (
     MODEL_IDS,
 )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# detect_language — REAL, runs offline (langdetect, no models)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestDetectLanguage:
 
@@ -49,16 +35,11 @@ class TestDetectLanguage:
         assert detect_language(None) == "unknown"
 
     def test_never_raises_on_garbage_input(self):
-        """Must degrade to 'unknown', never propagate an exception."""
         garbage_inputs = ["!!!???", "12345", "🙂🙂🙂", "a" * 5000]
         for text in garbage_inputs:
             result = detect_language(text)
             assert result in ("ar", "fr", "en", "unknown")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# is_likely_darija — REAL, pure string logic
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestIsLikelyDarija:
 
@@ -71,10 +52,6 @@ class TestIsLikelyDarija:
     def test_empty_string_returns_false(self):
         assert is_likely_darija("") is False
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# normalize_label — REAL, exhaustive across every model's label scheme
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestNormalizeLabel:
 
@@ -100,7 +77,7 @@ class TestNormalizeLabel:
 
     def test_neutral_is_always_midpoint(self):
         assert normalize_label("neutral", 0.5) == 0.5
-        assert normalize_label("neutral", 0.99) == 0.5  # confidence doesn't matter for neutral
+        assert normalize_label("neutral", 0.99) == 0.5
 
     def test_label_0_label_1_binary_scheme_with_warning(self, caplog):
         with caplog.at_level("WARNING"):
@@ -116,7 +93,6 @@ class TestNormalizeLabel:
         assert any("unrecognized label" in r.message for r in caplog.records)
 
     def test_never_returns_out_of_range_value(self):
-        """Sanity sweep — every recognized label must stay within [0, 1]."""
         for label in ["1 star", "2 stars", "3 stars", "4 stars", "5 stars",
                       "positive", "negative", "neutral", "LABEL_0", "LABEL_1"]:
             for conf in [0.0, 0.5, 0.99, 1.0]:
@@ -124,10 +100,6 @@ class TestNormalizeLabel:
                 if result is not None:
                     assert 0.0 <= result <= 1.0, f"{label}@{conf} -> {result} out of range"
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# score_text — model inference MOCKED (see module docstring)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestScoreText:
 
@@ -184,10 +156,6 @@ class TestScoreText:
             assert result["normalized_score"] is None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# aggregate_player_sentiment
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestAggregatePlayerSentiment:
 
     def test_no_texts_returns_none_sentiment(self):
@@ -215,7 +183,7 @@ class TestAggregatePlayerSentiment:
             ]
             result = aggregate_player_sentiment(["great player", "???"])
 
-        assert result["sentiment_raw"] == pytest.approx(1.0)  # only the scoreable one counted
+        assert result["sentiment_raw"] == pytest.approx(1.0)
         assert result["text_count"] == 2
         assert result["scored_count"] == 1
 

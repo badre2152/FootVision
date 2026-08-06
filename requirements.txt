@@ -1,40 +1,21 @@
-﻿# Football DSS — Bronze/Silver/Gold Layer Dependencies
-
-# ── HTTP & scraping ───────────────────────────────────────────────────────────
-requests
+﻿requests
 beautifulsoup4
 lxml
-
-# ── Browser automation ────────────────────────────────────────────────────────
 playwright
-playwright-stealth          # ← مضافة (مطلوبة فـ run_sofifa.py، كانت ناقصة تماماً)
-selenium                    # ← مضافة (مطلوبة في sofascore_detail_loader.py)
+playwright-stealth
+selenium
 undetected_chromedriver
-
-# ── Environment variables ─────────────────────────────────────────────────────
 python-dotenv
-
-# ── Data processing ───────────────────────────────────────────────────────────
 pandas
 numpy
-pyarrow                     # ← مضافة (مطلوبة لـ df.to_parquet في run_silver.py)
-
-# ── MinIO storage ─────────────────────────────────────────────────────────────
+pyarrow
 minio
-
-# ── Fuzzy matching ────────────────────────────────────────────────────────────
 rapidfuzz
-
-# ── StatsBomb open data ───────────────────────────────────────────────────────
 statsbombpy
-
-# ── Testing ───────────────────────────────────────────────────────────────────
 pytest
-
-# ── Dashboard (added 2026-07-14) ────────────────────────────────────────────────
 streamlit
 plotly
-reportlab                   # ← مضافة (PDF export, spec #12)
+reportlab
 praw
 google-api-python-client
 langdetect

@@ -1,12 +1,3 @@
-# tests/test_reddit_collector.py
-#
-# Tests ingestion/loaders/reddit_collector.py's collection logic using
-# MOCKED PRAW objects — no live Reddit API calls (reddit.com is not
-# reachable from this environment). This validates the request-building
-# and text-extraction logic; it does NOT validate that real Reddit
-# discussion volume for these 49 players is actually usable (see the
-# module's own "BEFORE TRUSTING" docstring note for that).
-
 import sys
 import os
 from unittest.mock import MagicMock, patch
@@ -72,7 +63,6 @@ class TestCollectPlayerTexts:
         assert texts == []
 
     def test_comment_limit_is_respected(self):
-        """MAX_COMMENTS_PER_SUBMISSION should cap how many comments are pulled per post."""
         from ingestion.loaders.reddit_collector import MAX_COMMENTS_PER_SUBMISSION
         mock_reddit = MagicMock()
         many_comments = [f"comment {i}" for i in range(MAX_COMMENTS_PER_SUBMISSION + 20)]
@@ -81,7 +71,6 @@ class TestCollectPlayerTexts:
 
         texts = _collect_player_texts(mock_reddit, "Player")
 
-        # title + first MAX_COMMENTS_PER_SUBMISSION comments only
         assert len(texts) == 1 + MAX_COMMENTS_PER_SUBMISSION
 
 
@@ -97,7 +86,6 @@ class TestBuildRedditClient:
         assert result is None
 
     def test_partial_credentials_still_returns_none(self, monkeypatch):
-        """All three env vars are required — having just one/two isn't enough."""
         monkeypatch.setenv("REDDIT_CLIENT_ID", "abc")
         monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
         monkeypatch.delenv("REDDIT_USER_AGENT", raising=False)
@@ -120,11 +108,6 @@ class TestBuildRedditClient:
 class TestLoadRedditBronze:
 
     def test_missing_credentials_degrades_gracefully(self, monkeypatch):
-        """
-        Must NOT crash the whole Bronze run just because Reddit isn't
-        configured — matches the existing pattern (statsbomb_loader.py's
-        graceful degradation when statsbombpy isn't installed).
-        """
         monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
         monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
         monkeypatch.delenv("REDDIT_USER_AGENT", raising=False)
@@ -141,17 +124,11 @@ class TestLoadRedditBronze:
         mock_upload.assert_called_once()
 
     def test_missing_seed_columns_raises(self):
-        bad_seed = pd.DataFrame({"player_id": ["P001"]})  # no player_name
+        bad_seed = pd.DataFrame({"player_id": ["P001"]})
         with pytest.raises(ValueError):
             load_reddit_bronze(bad_seed, run_date="TEST")
 
     def test_full_flow_with_mocked_reddit_client(self, monkeypatch):
-        """
-        End-to-end (minus the actual network call): credentials present,
-        PRAW client mocked to return real-shaped data for one player and
-        nothing for another — confirms per-player results assemble
-        correctly and coverage counting works.
-        """
         monkeypatch.setenv("REDDIT_CLIENT_ID", "abc")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "def")
         monkeypatch.setenv("REDDIT_USER_AGENT", "test-agent")
@@ -180,7 +157,7 @@ class TestLoadRedditBronze:
 
             status = load_reddit_bronze(seed, run_date="TEST")
 
-        assert "1/2" in status  # only Popular Player has data
+        assert "1/2" in status
 
 
 if __name__ == "__main__":

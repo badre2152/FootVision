@@ -1,27 +1,8 @@
-"""
-scripts/add_sofascore_slugs.py
-──────────────────────────────
-Merges the confirmed sofascore_slug values (from the 49/49 scraping run)
-into seeds/players_49.csv on sofascore_id.
-
-Idempotent: safe to run even if sofascore_slug already exists in the CSV —
-existing values are overwritten with the confirmed ones, column position
-is normalised to sit immediately after sofascore_id, and the file is
-written back in-place.
-
-Usage:
-    python scripts/add_sofascore_slugs.py
-    python scripts/add_sofascore_slugs.py --csv path/to/players_49.csv
-"""
-
 import argparse
 from pathlib import Path
 
 import pandas as pd
 
-# Confirmed slugs from the 49/49 Selenium scraping run.
-# DO NOT derive these from player_name — SofaScore slugs often differ
-# (e.g. Bounou → "bono", Chibi → "chibi-mohamed").
 CONFIRMED_SLUG_MAP: dict[int, str] = {
     1140885: "mehdi-harrar",
     970630:  "el-mehdi-benabid",
@@ -81,7 +62,6 @@ def add_slugs(csv_path: Path) -> None:
     if "sofascore_id" not in df.columns:
         raise ValueError(f"'sofascore_id' column not found in {csv_path}")
 
-    # Map confirmed slugs onto each row via sofascore_id.
     def _lookup(sid):
         if pd.isna(sid):
             return None
@@ -92,14 +72,12 @@ def add_slugs(csv_path: Path) -> None:
 
     df["sofascore_slug"] = df["sofascore_id"].map(_lookup)
 
-    # Normalise column order: sofascore_slug immediately after sofascore_id.
     cols = list(df.columns)
     cols.remove("sofascore_slug")
     insert_at = cols.index("sofascore_id") + 1
     cols.insert(insert_at, "sofascore_slug")
     df = df[cols]
 
-    # Validate coverage before writing.
     missing = df[df["sofascore_slug"].isna()]
     if not missing.empty:
         print(f"WARNING: {len(missing)} player(s) have no confirmed slug:")

@@ -1,36 +1,3 @@
-# ingestion/loaders/reddit_collector.py
-# Source: Reddit (PRAW) — raw text for SentimentScore
-#
-# Added 2026-07-22 (Sentiment session). Reddit's free tier (100 queries/
-# minute per OAuth client, non-commercial/academic use) is the primary
-# real-time source for SentimentScore — see MASTER_SPEC_ADDENDUM_2026-07-14.md
-# §4 for why Twitter/X was ruled out (no free tier since Feb 2026) and why
-# Facebook/Instagram were ruled out (App Review + business verification
-# required for arbitrary public content — not practical for this project).
-#
-# ⚠️ UNTESTED AGAINST LIVE REDDIT ⚠️
-# reddit.com is not reachable from the sandbox this was written in (only
-# github/pypi/npm-family domains are whitelisted). The REQUEST-BUILDING
-# and TEXT-EXTRACTION logic below is unit-tested against mocked PRAW
-# objects (see tests/test_reddit_collector.py) — praw itself IS installed
-# and its class shapes were inspected to write this correctly, but no
-# live OAuth call has ever succeeded from this environment.
-#
-# BEFORE TRUSTING THIS IN A REAL RUN:
-#   1. Register a Reddit "script" app at https://reddit.com/prefs/apps
-#      (free, instant — no approval wait, unlike Meta/X).
-#   2. Add to .env: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USER_AGENT
-#      (user agent should look like "football-atlas/1.0 by u/yourusername"
-#      per Reddit's API rules — generic user agents get rate-limited harder).
-#   3. Run this loader for 2-3 well-known players (e.g. Hakimi, En-Nesyri)
-#      and confirm non-empty text is actually returned — Reddit search can
-#      return 0 results for a query that looks fine but doesn't match how
-#      people actually spell/discuss the player.
-#   4. Check the coverage report (assert_min_coverage) — Reddit discussion
-#      volume for most of the 49 candidates (many play in Botola Pro /
-#      lesser-known leagues) will likely be LOW. Don't be surprised if
-#      real coverage is under 30% — that's a volume reality, not a bug.
-
 import logging
 import os
 from datetime import datetime
@@ -44,16 +11,11 @@ logger = logging.getLogger(__name__)
 
 BUCKET = "football-bronze"
 
-# Subreddits most likely to discuss Morocco national team players.
-# r/soccer is huge/general (English), the others are more targeted.
-# This list is a starting guess, NOT verified against real subreddit
-# activity levels — check actual hit counts on first real run and prune
-# subreddits that return nothing.
 SUBREDDITS = "soccer+MoroccoNationalTeam+Morocco"
 
 MAX_SUBMISSIONS_PER_PLAYER = 15
 MAX_COMMENTS_PER_SUBMISSION = 10
-SEARCH_TIME_FILTER = "year"  # "all", "year", "month", "week" — PRAW's search() param
+SEARCH_TIME_FILTER = "year"
 
 
 def _try_import_praw():
@@ -114,10 +76,6 @@ def _collect_player_texts(reddit, player_name: str) -> list[str]:
         if submission.selftext:
             texts.append(submission.selftext)
 
-        # Flatten comment tree without expanding "load more comments"
-        # (replace_more(limit=0) drops those nodes instead of making more
-        # API calls per submission — keeps this loader's request budget
-        # predictable: ~1 search + 1 comment-tree fetch per player).
         submission.comments.replace_more(limit=0)
         for comment in submission.comments.list()[:MAX_COMMENTS_PER_SUBMISSION]:
             if comment.body:
@@ -171,10 +129,6 @@ def load_reddit_bronze(seed_df: pd.DataFrame, run_date: str = "") -> str:
         records.append(record)
 
     assert_min_coverage(records, min_pct=0.15, source="reddit")
-    # min_pct deliberately lower than other sources (0.30 default) — Reddit
-    # discussion volume for a 49-player pool skewed toward non-European
-    # leagues is realistically going to be sparse for most candidates.
-    # See the module-level "BEFORE TRUSTING" note above.
 
     object_name = f"reddit/players_reddit_{run_date}.json"
     success  = upload_json(BUCKET, object_name, records)

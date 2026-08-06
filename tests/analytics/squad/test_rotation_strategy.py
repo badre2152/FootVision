@@ -1,7 +1,3 @@
-# tests/test_rotation_strategy.py
-#
-# Test suite for analytics/rotation_strategy.py — added 2026-07-30.
-
 import sys
 import os
 
@@ -24,9 +20,6 @@ from analytics.squad.rotation_strategy import (
 
 
 def _toy_squad():
-    """1 GK slot pool of 3, 4 DEF slot pool of 6, 5 MID slot pool of 8, 1 FWD slot pool of 3
-    -> matches REAL_FORMATION (1/4/5/1), enough depth in each group to
-    exercise rotation-candidate selection."""
     rng = np.random.default_rng(0)
     rows = []
     for pos, n in [("GK", 3), ("DEF", 6), ("MID", 8), ("FWD", 3)]:
@@ -80,7 +73,7 @@ class TestRecommendXi:
         assert len(rec.recommended_xi) == len(set(rec.recommended_xi))
 
     def test_missing_injury_risk_score_defaults_neutral(self):
-        df = _toy_squad()  # no InjuryRiskScore column at all
+        df = _toy_squad()
         rec = recommend_xi(df, opponent_difficulty="Easy")
         assert (rec.priority_table["injury_risk_penalty_component"] == 0.5).all()
 
@@ -104,9 +97,9 @@ class TestRecommendXi:
 
     def test_rotation_bonus_only_applied_for_nonzero_difficulty_bonus(self):
         df = _toy_squad()
-        rec_hard = recommend_xi(df, opponent_difficulty="Very Hard")  # bonus = 0.00
+        rec_hard = recommend_xi(df, opponent_difficulty="Very Hard")
         assert (rec_hard.priority_table["rotation_bonus"] == 0).all()
-        rec_easy = recommend_xi(df, opponent_difficulty="Easy")  # bonus = 0.12
+        rec_easy = recommend_xi(df, opponent_difficulty="Easy")
         assert (rec_easy.priority_table["rotation_bonus"].isin([0, OPPONENT_DIFFICULTY_ROTATION_BONUS["Easy"]])).all()
 
     def test_insufficient_players_in_position_warns_not_crashes(self, caplog):
@@ -116,9 +109,7 @@ class TestRecommendXi:
             {"player_name": f"MID_{i}", "position": "MID", "DSSScore": 0.5, "AvailabilityScore": 0.8}
             for i in range(9)
         ])
-        # ask for 2 GK slots (only 1 available) — formation still sums to 11
         rec = recommend_xi(df, opponent_difficulty="Easy", formation={"GK": 2, "DEF": 0, "MID": 9, "FWD": 0})
-        # can't fill 2 GK slots from 1 candidate -> selects the 1 available, doesn't crash
         assert rec.recommended_xi.count("only_gk") == 1
 
 
@@ -131,21 +122,16 @@ class TestBuildRotationPlan:
         assert [m.opponent for m in plan.matches] == ["Brazil", "Scotland", "Haiti"]
 
     def test_fatigue_accumulates_for_repeated_starters(self):
-        # tiny squad forces the exact same 11 to start every match
         df = pd.DataFrame([
             {"player_name": f"{pos}_{i}", "position": pos, "DSSScore": 0.5, "AvailabilityScore": 0.8}
             for pos, n in [("GK", 1), ("DEF", 4), ("MID", 5), ("FWD", 1)]
             for i in range(n)
         ])
         plan = build_rotation_plan(df, fixtures=REAL_GROUP_STAGE_2026)
-        # every player started all 3 matches -> fatigue > 0 for everyone,
-        # and higher than a single start would produce (decay < full reset)
         assert all(f > 0 for f in plan.fatigue_after.values())
 
     def test_rest_days_decay_fatigue_between_matches(self):
         df = _toy_squad()
-        # fixture with a long rest gap should show lower cumulative fatigue
-        # than one with none, for a player who started match 1
         long_rest = [
             {"match_number": 1, "opponent": "X", "difficulty": "Very Hard", "rest_days_before": None},
             {"match_number": 2, "opponent": "Y", "difficulty": "Very Hard", "rest_days_before": 20},
@@ -166,7 +152,7 @@ class TestValidateVsRealXi:
     def test_perfect_overlap_when_recommended_equals_real(self):
         df = _toy_squad()
         rec = recommend_xi(df, opponent_difficulty="Medium")
-        rec.recommended_xi = list(REAL_XI_ALL_THREE_MATCHES)  # force equality
+        rec.recommended_xi = list(REAL_XI_ALL_THREE_MATCHES)
         result = validate_vs_real_xi(rec)
         assert result["overlap_count"] == 11
         assert result["overlap_pct"] == 1.0

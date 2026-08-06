@@ -1,26 +1,3 @@
-# ingestion/loaders/wikidata_loader.py
-# Source 1: Wikidata — Biographical Metadata
-#
-# v19 rewrite:
-#   Strategy changed from live SPARQL-by-name to embedded static lookup.
-#
-#   WHY:
-#     - Old approach queried SPARQL by player_name (rdfs:label "@en") →
-#       low coverage because many players lack an exact English label on Wikidata.
-#     - Wikidata's P2446 (Transfermarkt ID) gives 49/49 matches since we have
-#       tm_id for every player in the seed. A one-time batch SPARQL query
-#       (run manually via query.wikidata.org) produced the full dataset,
-#       verified and embedded here as WIKIDATA_LOOKUP.
-#     - Embedding avoids runtime dependency on Wikidata's SPARQL endpoint
-#       (rate limits, bot challenges, network blocks in CI/CD environments).
-#
-#   HEIGHT NORMALISATION:
-#     Wikidata stores height inconsistently — some entries use cm (e.g. 183),
-#     others use metres (e.g. 1.83). Any value < 3.0 is treated as metres
-#     and multiplied by 100.
-#
-#   COVERAGE: 49/49 players (100%) — all matched via wdt:P2446 (TM ID).
-
 import logging
 from datetime import datetime
 
@@ -33,17 +10,6 @@ logger = logging.getLogger(__name__)
 
 BUCKET = "football-bronze"
 
-# ── Static lookup: tm_id → Wikidata biographical data ────────────────────────
-# Generated via query.wikidata.org using wdt:P2446 (Transfermarkt player ID).
-# Query used:
-#   SELECT ?player ?playerLabel ?tm_id ?dob ?height_cm ?foot ?footLabel WHERE {
-#     VALUES ?tm_id { <all 49 tm_ids> }
-#     ?player wdt:P2446 ?tm_id .
-#     OPTIONAL { ?player wdt:P569 ?dob . }
-#     OPTIONAL { ?player wdt:P2048 ?height_cm . }
-#     OPTIONAL { ?player wdt:P2552 ?foot . }
-#     SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
-#   }
 WIKIDATA_LOOKUP: dict[str, dict] = {
     "822538":  {"wiki_qid": "Q130508822", "wiki_label": "El Mehdi Al Harrar",       "wiki_dob": "2000-11-30", "wiki_height_cm": None},
     "544414":  {"wiki_qid": "Q101113732", "wiki_label": "Mehdi Benabid",             "wiki_dob": "1998-01-24", "wiki_height_cm": 188},
@@ -98,17 +64,6 @@ WIKIDATA_LOOKUP: dict[str, dict] = {
 
 
 def fetch_wikidata_player(tm_id: str) -> dict:
-    """
-    Looks up biographical data for one player by tm_id from the static
-    WIKIDATA_LOOKUP table. Returns dict with wiki_* columns, or {} if
-    tm_id is not found in the table.
-
-    Columns:
-        wiki_qid        — Wikidata entity ID (e.g. Q3571952)
-        wiki_dob        — date of birth (YYYY-MM-DD)
-        wiki_height_cm  — height in cm (int), normalised from metres if needed
-        wiki_label      — player name as it appears on Wikidata
-    """
     return WIKIDATA_LOOKUP.get(str(tm_id), {})
 
 
@@ -116,16 +71,6 @@ def load_wikidata_bronze(
     seed_df: pd.DataFrame,
     run_date: str = "",
 ) -> str:
-    """
-    Emits Wikidata biographical metadata for all 49 players using the
-    static WIKIDATA_LOOKUP table (keyed by tm_id).
-
-    No network calls are made — data was pre-fetched via a one-time batch
-    SPARQL query on query.wikidata.org using wdt:P2446 (Transfermarkt ID).
-
-    seed_df must contain: 'player_id', 'tm_id'.
-    Returns status string: "OK (N/49 players with data)" or "FAILED".
-    """
     if not run_date:
         run_date = datetime.now().strftime("%Y%m%d_%H%M%S")
 

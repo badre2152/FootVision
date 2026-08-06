@@ -1,8 +1,3 @@
-# tests/test_competition_context.py
-#
-# Test suite for analytics/competition_context.py — Best XI Generator
-# (formation-based, no opponent data — see module docstring for scope).
-
 import sys
 import os
 
@@ -20,9 +15,6 @@ from analytics.scouting.competition_context import (
 
 
 def _make_pool(counts: dict[str, int], score_start: float = 0.90) -> pd.DataFrame:
-    """Builds a synthetic candidate pool with `counts[position]` players at
-    each position, DSSScore descending within each position so rank order
-    is deterministic and easy to assert on."""
     rows = []
     for position, n in counts.items():
         for i in range(n):
@@ -35,7 +27,7 @@ def _make_pool(counts: dict[str, int], score_start: float = 0.90) -> pd.DataFram
     return pd.DataFrame(rows)
 
 
-FULL_POOL = _make_pool({"GK": 3, "DEF": 9, "MID": 9, "FWD": 5})  # mirrors real top26 composition
+FULL_POOL = _make_pool({"GK": 3, "DEF": 9, "MID": 9, "FWD": 5})
 
 
 class TestFormationValidation:
@@ -69,7 +61,6 @@ class TestBestXI:
         result = build_best_xi(FULL_POOL, formation="4-3-3")
         def_in_xi = result.starting_xi[result.starting_xi["position"] == "DEF"]
         assert len(def_in_xi) == 4
-        # top 4 DEF by score are DEF00..DEF03 (score_start down by 0.01 each)
         assert set(def_in_xi["player_id"]) == {"DEF00", "DEF01", "DEF02", "DEF03"}
 
     def test_bench_excludes_starters_and_is_sorted(self):
@@ -78,14 +69,14 @@ class TestBestXI:
         assert len(result.bench) == len(FULL_POOL) - 11
 
     def test_shortfall_reported_when_pool_too_shallow_and_no_fallback(self):
-        thin_pool = _make_pool({"GK": 1, "DEF": 2, "MID": 9, "FWD": 5})  # only 2 DEF, formation needs 4
+        thin_pool = _make_pool({"GK": 1, "DEF": 2, "MID": 9, "FWD": 5})
         result = build_best_xi(thin_pool, formation="4-3-3")
         assert result.shortfalls.get("DEF") == 2
-        assert len(result.starting_xi) == 9  # 11 - 2 short
+        assert len(result.starting_xi) == 9
 
     def test_fallback_pool_fills_shortfall_and_is_flagged(self):
         thin_pool = _make_pool({"GK": 1, "DEF": 2, "MID": 9, "FWD": 5})
-        wide_pool = _make_pool({"GK": 1, "DEF": 9, "MID": 9, "FWD": 5}, score_start=0.5)  # lower scores, deeper DEF
+        wide_pool = _make_pool({"GK": 1, "DEF": 9, "MID": 9, "FWD": 5}, score_start=0.5)
         result = build_best_xi(thin_pool, formation="4-3-3", fallback_pool=wide_pool)
         assert not result.shortfalls
         assert len(result.starting_xi) == 11

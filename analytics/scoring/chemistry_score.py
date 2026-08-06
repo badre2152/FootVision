@@ -1,27 +1,3 @@
-# analytics/scoring/chemistry_score.py
-# Gold Layer — ChemistryScore Computation
-#
-# Rebuilt 2026-07-14 (was in a prior session, missing from this codebase
-# snapshot — see AUDIT session notes).
-#
-# Measures how well a player combines with teammates, using the average
-# combined-passes/90 rate from the pairwise StatsBomb pass network
-# (statsbomb_loader._aggregate_pairwise_chemistry -> silver_pipeline
-# join_chemistry_pairs -> Silver column "chem_avg_per90").
-#
-# Coverage: 11/49 candidates have REAL pairwise data (only StatsBomb-covered
-# WC2018/2022 + AFCON2023 matches give pass-recipient event data). The other
-# 38/49 are ALREADY imputed with position-group median inside Silver
-# (impute_by_position() — chem_avg_per90 is in IMPUTE_OUTFIELD_COLS /
-# IMPUTE_GK_COLS), so by the time this module runs the column is 49/49
-# non-null. This module only normalizes it — no further imputation needed
-# here, unlike MentalScore which does its own two-source COALESCE.
-#
-# This is a genuine data-availability ceiling, not a bug: pairwise chemistry
-# can only be measured between two players who started together in a
-# covered StatsBomb match. 38/49 imputed players get their position group's
-# median chemistry — a neutral assumption, not a penalty or a bonus.
-
 import logging
 import numpy as np
 import pandas as pd

@@ -1,24 +1,3 @@
-#!/usr/bin/env python
-# run_gold.py — Football DSS Gold Layer Pipeline
-#
-# Reads Silver output (MinIO Bronze join), normalizes all columns,
-# computes all scores, and exports:
-#   1. gold/players_scored_YYYYMMDD.csv  — full scored table
-#   2. gold/top26_YYYYMMDD.csv           — top 26 recommended players
-#   3. gold/squad_summary_YYYYMMDD.json  — position breakdown + flagged risks
-#
-#
-# NEW 2026-07-29: also runs Player DNA (K-Means) clustering and adds a
-# "PlayerDNA" column to all three outputs above — see
-# analytics/ml/player_clustering.py for what it is and, importantly, what
-# it deliberately is NOT (a squad-selection input).
-#
-# Run AFTER run_bronze.py:
-#   python run_gold.py
-#   python run_gold.py --top-n 26
-#   python run_gold.py --no-player-dna       # skip clustering (fast iteration)
-#   python run_gold.py --player-dna-k 4      # force k=4 instead of auto-select
-
 import argparse
 import json
 import logging
@@ -39,23 +18,16 @@ from analytics.scoring.performance_score import (
     compute_international_score,
     compute_final_score,
 )
-from analytics.scoring.chemistry_score import compute_chemistry_score      # NEW 2026-07-14
-from analytics.scoring.pressure_index import compute_pressure_index        # NEW 2026-07-14
+from analytics.scoring.chemistry_score import compute_chemistry_score
+from analytics.scoring.pressure_index import compute_pressure_index
 from analytics.scoring.flexibility_score import (
-    compute_flexibility_score,       # NEW 2026-07-14 (UNTESTED upstream — see module docstring)
-    secondary_position_groups,       # NEW 2026-08-01 (spec #13) — TM label -> GK/DEF/MID/FWD
+    compute_flexibility_score,
+    secondary_position_groups,
 )
-from analytics.scoring.sentiment_score import compute_sentiment_score      # NEW 2026-07-22 (UNTESTED end-to-end — see module docstring)
-from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary  # WIRED IN 2026-07-14 (was orphaned)
-from analytics.ml.player_clustering import cluster_players  # NEW 2026-07-29 — ML layer, see module docstring
+from analytics.scoring.sentiment_score import compute_sentiment_score
+from analytics.scoring.percentile_score import apply_percentile_scoring, score_summary
+from analytics.ml.player_clustering import cluster_players
 
-# C2 reorg note: select_squad_with_position_cap() and build_squad_summary()
-# used to be defined right here in this script (~270 lines of squad-selection
-# domain logic living inside an entrypoint). They now live in
-# analytics/squad/squad_selection.py — this import re-exports them so
-# `run_gold.select_squad_with_position_cap` / `run_gold.build_squad_summary`
-# still resolve for existing callers (including tests/pipelines/*.py, which
-# import this module directly to reach them) without any change on their end.
 from analytics.squad.squad_selection import (  # noqa: F401
     select_squad_with_position_cap,
     build_squad_summary,
@@ -63,46 +35,16 @@ from analytics.squad.squad_selection import (  # noqa: F401
 )
 
 
-# ══════════════════════════════════════════════════════════════════════════
-# TOP_EXPORT_COLS / build_top_cols() — regression fix (03_regression_protection.md)
-# ══════════════════════════════════════════════════════════════════════════
-# HISTORY: this used to be a local `top_cols = [...]` list inline in main(),
-# built without "SquadRank". That was fixed once (SquadRank added), then the
-# fix was silently lost again in a later delivered archive because nothing
-# asserted on the column list's actual contents — see
-# tests/test_regression_protection.py::TestTopColsIncludesSquadRank, which
-# now pins this exact behavior so it can't regress again unnoticed.
-#
-# Pulled out to a module-level constant + a testable function (rather than
-# an inline list inside main()) specifically so a test can import run_gold
-# and call build_top_cols() directly, without running the full pipeline.
 TOP_EXPORT_COLS = [
     "SquadRank", "Rank", "player_id", "player_name", "position", "club", "league",
     "DSSScore", "DSSScore_pct", "PerformanceScore", "FormScore",
     "MentalScore", "AvailabilityScore", "InternationalScore",
     "ChemistryScore", "PressureIndex", "FlexibilityScore", "SentimentScore",
-    "PlayerDNA", "selection_reason",  # NEW 2026-08-01 (spec #13)
+    "PlayerDNA", "selection_reason",
 ]
 
 
 def build_top_cols(available_columns) -> list[str]:
-    """
-    Returns TOP_EXPORT_COLS filtered down to whichever of those columns are
-    actually present in `available_columns` (preserving TOP_EXPORT_COLS's
-    order). Columns not present are silently dropped — this is a
-    defensive/optional-column filter, not a validation step, so a squad_df
-    missing e.g. "selection_reason" (or, in principle, "SquadRank") must not
-    raise here.
-
-    Args:
-        available_columns: any iterable of column names — typically
-            `squad_df.columns`, but plain lists work too (see
-            tests/test_regression_protection.py).
-
-    Returns:
-        The subset of TOP_EXPORT_COLS present in available_columns, in
-        TOP_EXPORT_COLS's canonical order.
-    """
     available = set(available_columns)
     return [c for c in TOP_EXPORT_COLS if c in available]
 
@@ -198,18 +140,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-# NOTE: apply_minutes_filter() used to be defined here as a full duplicate
-# of analytics/scoring/minutes_filter.py — dead code, never called (main()
-# always imported the real implementation from that module — see below).
-# Removed to stop the two copies from silently drifting apart again (this
-# is exactly how the w.get() weight-key bug in minutes_filter.py happened:
-# someone fixed one copy and not the other). The single source of truth for
-# minutes-based availability penalties is analytics/scoring/minutes_filter.py.
-
-
-
 def upload_gold_to_minio(local_path: Path, object_name: str) -> None:
-    """Uploads a single Gold output file to the football-gold MinIO bucket."""
     if os.getenv("MINIO_MOCK", "0") == "1":
         logging.getLogger("run_gold").info("MINIO_MOCK=1 — skipping upload of %s", object_name)
         return
@@ -223,7 +154,6 @@ def upload_gold_to_minio(local_path: Path, object_name: str) -> None:
 
 
 def ensure_minio_buckets() -> None:
-    """Auto-create football-silver and football-gold buckets if not present."""
     if os.getenv("MINIO_MOCK", "0") == "1":
         return
     try:
@@ -235,26 +165,8 @@ def ensure_minio_buckets() -> None:
     except Exception as e:
         logging.getLogger("run_gold").warning("Could not verify MinIO buckets: %s", e)
 
-# ══════════════════════════════════════════════════════════════════════════
-# main() decomposition (C4 in the architecture review)
-# ══════════════════════════════════════════════════════════════════════════
-# main() used to be a single ~220-line function doing orchestration + data
-# enrichment + ML fallback handling + file I/O + validation + console
-# reporting all in one place — impossible to unit-test any one piece without
-# running the whole pipeline. Split into the stage functions below; main()
-# itself is now purely sequencing them. Every log message, exception-handling
-# path, and computation is copied verbatim — only the function boundaries are
-# new, nothing about what runs or in what order has changed.
-
 
 def _enrich_with_clubelo(df: pd.DataFrame, args: argparse.Namespace) -> None:
-    """
-    Step 2.5/5 (optional, --use-clubelo only). Patches the module-level
-    LEAGUE_DIFFICULTY table in analytics/scoring/league_quality.py in place
-    for this run — does not modify or return `df` itself. A fetch/patch
-    failure must never block a real squad-selection run, so this always
-    falls back to the hardcoded table on any error.
-    """
     if not args.use_clubelo:
         return
 
@@ -289,40 +201,19 @@ def _enrich_with_clubelo(df: pd.DataFrame, args: argparse.Namespace) -> None:
 
 
 def _compute_all_subscores(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
-    """Step 3/5 — the full sub-score chain (Performance, Form, Mental, ...)."""
     df = compute_performance_score(df)
-    df = compute_form_score(df)          # CONFLICT-01 FIX: uses form_final + rating_final
-    df = compute_mental_score(df)        # CONFLICT-03 FIX: StatsBomb proxy
+    df = compute_form_score(df)
+    df = compute_mental_score(df)
     df = compute_availability_score(df)
     df = compute_international_score(df)
-    df = compute_chemistry_score(df)     # NEW 2026-07-14 — pairwise StatsBomb pass network
-    df = compute_pressure_index(df)      # NEW 2026-07-14 — StatsBomb intl xG vs club xG delta
-    df = compute_flexibility_score(df)   # NEW 2026-07-14 — UNTESTED upstream, see module docstring
-    df = compute_sentiment_score(df, use_nlp=not args.no_sentiment_nlp)  # NEW 2026-07-22
+    df = compute_chemistry_score(df)
+    df = compute_pressure_index(df)
+    df = compute_flexibility_score(df)
+    df = compute_sentiment_score(df, use_nlp=not args.no_sentiment_nlp)
     return df
 
 
 def _apply_final_scoring(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Step 4/5 — minutes filter, final DSSScore + rank, the post-scoring DSS
-    gate, and percentile scoring.
-
-    BUG-01 FIX (03_regression_protection.md / analytics/scoring/minutes_filter.py):
-    apply_dss_gate() MUST run AFTER compute_final_score(), never before.
-    apply_minutes_filter() only classifies activity + penalizes
-    AvailabilityScore; the actual DSSScore-level gate (the one that stops an
-    injured/inactive player like Imran Louza topping the ranking on the
-    strength of historical stats alone) is applied to the real freshly-
-    computed DSSScore. Reordering these two calls silently reintroduces
-    BUG-01 — no exception used to be raised, the gate's effect just
-    vanished. This is now enforced structurally, not just by this comment:
-    the calls below go through StageGuard (pipelines/_stage_guard.py),
-    which raises AssertionError immediately if dss_gate is ever reached
-    before final_score has actually run — see that module's docstring.
-    tests/pipelines/test_gold2_components.py's TestMinutesFilterWeightBinding
-    class additionally asserts on the actual numeric effect, not just that
-    the functions were called.
-    """
     from pipelines._stage_guard import StageGuard
     guard = StageGuard()
 
@@ -342,26 +233,11 @@ def _apply_final_scoring(df: pd.DataFrame) -> pd.DataFrame:
     from analytics.scoring.minutes_filter import apply_dss_gate
     df = guard.run("dss_gate", apply_dss_gate, df, depends_on=("final_score",))
 
-    # WIRED IN 2026-07-14: was a fully-built, never-called module
-    # (analytics/scoring/percentile_score.py — confirmed zero call sites
-    # anywhere in the codebase before this). Adds DSSScore_pct for
-    # dashboard/report DISPLAY only — never changes Rank or squad
-    # selection (the module self-verifies this with a rank-mismatch check
-    # logged as an error if it ever occurs).
     df = guard.run("percentile_score", apply_percentile_scoring, df, depends_on=("dss_gate",))
     return df
 
 
 def _run_player_dna(df: pd.DataFrame, args: argparse.Namespace) -> tuple[pd.DataFrame, dict, int | None]:
-    """
-    Step 5/6 — Player DNA (K-Means, ML layer). Descriptive/exploratory
-    play-style tag, NOT a selection input — see
-    analytics/ml/player_clustering.py module docstring for the full
-    rationale. Wrapped in try/except: a clustering failure must never block
-    a real squad-selection run, same pattern as --use-clubelo.
-
-    Returns (df, dna_archetype_map, dna_k).
-    """
     if args.no_player_dna:
         logger.info("Step 5/6 — Player DNA clustering SKIPPED (--no-player-dna).")
         df["PlayerDNA"] = "N/A"
@@ -405,7 +281,6 @@ def _run_player_dna(df: pd.DataFrame, args: argparse.Namespace) -> tuple[pd.Data
 
 
 def _export_full_table(df: pd.DataFrame, output_dir: Path, run_date: str) -> Path:
-    """Exports the full scored table (all candidates) and uploads it to Gold."""
     full_path = output_dir / f"players_scored_{run_date}.csv"
     df.to_csv(full_path, index=False)
     logger.info("Full table: %s", full_path)
@@ -416,7 +291,6 @@ def _export_full_table(df: pd.DataFrame, output_dir: Path, run_date: str) -> Pat
 def _select_and_export_squad(
     df: pd.DataFrame, args: argparse.Namespace, output_dir: Path, run_date: str,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """Runs position-capped squad selection and exports top-N.csv. Returns (squad_df, top_cols)."""
     squad_df = select_squad_with_position_cap(
         df,
         top_n=args.top_n,
@@ -436,12 +310,8 @@ def _build_and_export_summary(
     squad_df: pd.DataFrame, df: pd.DataFrame, args: argparse.Namespace,
     output_dir: Path, run_date: str, dna_archetype_map: dict, dna_k: int | None,
 ) -> dict:
-    """Builds squad_summary.json (position breakdown, flags, Player DNA breakdown) and exports it."""
     summary = build_squad_summary(squad_df, df, args.top_n)
-    summary["percentile_summary"] = score_summary(df, top_n=args.top_n)  # WIRED IN 2026-07-14
-    # NEW 2026-07-29 — Player DNA breakdown WITHIN the selected squad only.
-    # Descriptive only: never used by select_squad_with_position_cap(),
-    # squad selection already happened by the time this runs.
+    summary["percentile_summary"] = score_summary(df, top_n=args.top_n)
     summary["player_dna"] = {
         "k_chosen": dna_k,
         "archetype_map": dna_archetype_map,
@@ -458,12 +328,6 @@ def _build_and_export_summary(
 
 
 def _check_guard_rails(summary: dict, args: argparse.Namespace) -> None:
-    """
-    Post-export sanity checks — catches the exact class of regression
-    documented in build_squad_summary()'s docstring (position_breakdown
-    silently computed from the wrong DataFrame) automatically, instead of
-    relying on someone noticing an impossible squad composition by eye.
-    """
     for pos, cap in DEFAULT_POSITION_CAPS.as_dict().items():
         actual = summary["position_counts"].get(pos, 0)
         if actual != cap:
@@ -479,7 +343,6 @@ def _check_guard_rails(summary: dict, args: argparse.Namespace) -> None:
 
 
 def _print_top_squad(top_df: pd.DataFrame, top_cols: list[str], args: argparse.Namespace) -> None:
-    """Prints the final top-N squad to the console/log."""
     logger.info("=" * 60)
     logger.info("TOP %d RECOMMENDED PLAYERS:", args.top_n)
     logger.info("-" * 60)
@@ -505,29 +368,22 @@ def main() -> None:
     logger.info("run_date: %s  |  top_n: %d", run_date, args.top_n)
     logger.info("=" * 60)
 
-    # ── Step 1: Silver (JOIN + RENAME + COALESCE + IMPUTE + VALIDATE) ───────
     logger.info("Step 1/5 — Building Silver layer from MinIO Bronze sources...")
     df = build_silver(run_date=run_date, seed_path=SEED_PATH)
     logger.info("Silver complete: %d rows × %d columns", *df.shape)
 
-    # ── Step 2: Normalize ─────────────────────────────────────────────────────
     logger.info("Step 2/5 — Normalizing columns to [0, 1]...")
     df = normalize_all(df)
 
-    # ── Step 2.5 (optional): ClubElo enrichment ──────────────────────────────
     _enrich_with_clubelo(df, args)
 
-    # ── Step 3: Sub-scores ────────────────────────────────────────────────────
     logger.info("Step 3/5 — Computing sub-scores...")
     df = _compute_all_subscores(df, args)
 
-    # ── Step 4: Final composite DSS score ─────────────────────────────────────
     df = _apply_final_scoring(df)
 
-    # ── Step 5: Player DNA ────────────────────────────────────────────────────
     df, dna_archetype_map, dna_k = _run_player_dna(df, args)
 
-    # ── Step 6: Export ────────────────────────────────────────────────────────
     logger.info("Step 6/6 — Exporting results...")
     _export_full_table(df, output_dir, run_date)
     squad_df, top_cols = _select_and_export_squad(df, args, output_dir, run_date)

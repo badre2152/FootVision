@@ -1,7 +1,3 @@
-# tests/test_rival_benchmark.py
-#
-# Regression tests for 23_rival_benchmark.md.
-
 import os
 import sys
 
@@ -44,9 +40,6 @@ def _fake_references():
 class TestLoadReferencePlayers:
 
     def test_loads_the_real_seed_file(self):
-        """The actual seeds/rival_reference_players.csv shipped with this
-        change must load and contain the 3 curated Brazil players (GK/CB/ST
-        — the spec's explicit minimum: GK, CB, ST)."""
         df = load_reference_players()
         assert not df.empty
         assert set(df["position"]) >= {"GK", "DEF", "FWD"}
@@ -76,8 +69,6 @@ class TestGetReferencesForPosition:
 class TestCompareToReference:
 
     def test_never_touches_any_score_column(self):
-        """Functional Requirement #3: this must never read/write DSSScore
-        or any *Score column — only raw per-90 stat columns."""
         player = pd.Series({
             "player_name": "Test Candidate", "position": "GK",
             "DSSScore": 0.87, "PerformanceScore": 0.9,
@@ -88,8 +79,6 @@ class TestCompareToReference:
         assert all("Score" not in c for c in result["categories"])
 
     def test_player_worse_at_conceding_scales_lower_than_better_keeper(self):
-        """GA_per90 is inverted (fewer goals conceded = better) — confirms
-        the inversion actually happens, not just that a number comes out."""
         good_keeper = pd.Series({"player_name": "Good GK", "position": "GK", "GA_per90": 0.5, "GK_saves_per90": 3.0})
         bad_keeper = pd.Series({"player_name": "Bad GK", "position": "GK", "GA_per90": 2.0, "GK_saves_per90": 3.0})
         refs = _fake_references()
@@ -111,10 +100,6 @@ class TestCompareToReference:
                     assert 0.0 <= v <= 1.0
 
     def test_missing_stat_value_scales_to_none_not_zero(self):
-        """A player missing a stat must show as 'no data' (None), never
-        silently plotted as 0 (which would look like 'worst possible',
-        a misleading claim this project explicitly avoids elsewhere too
-        — see the chem_is_real / pressure_data_confidence precedent)."""
         player = pd.Series({"player_name": "Partial Data CB", "position": "DEF", "Tkl_per90": 4.0})
         result = compare_to_reference(player, "DEF", _fake_references())
         assert result["player_values_scaled"]["Int_per90"] is None
@@ -133,19 +118,11 @@ class TestCompareToReference:
         assert result["categories"] == []
 
     def test_stats_verified_flag_surfaces_per_reference(self):
-        """The dashboard needs to know which references have real,
-        verified stat values vs which are curated-but-not-yet-populated
-        (see seeds/rival_reference_players.csv — all 3 shipped references
-        are currently stats_verified=False, real values not yet fetched)."""
         player = pd.Series({"player_name": "Test GK", "position": "GK", "GA_per90": 1.0, "GK_saves_per90": 3.0})
         result = compare_to_reference(player, "GK", _fake_references())
         assert result["references"][0]["stats_verified"] is True
 
     def test_all_position_buckets_have_defined_categories(self):
-        """Sanity check: GK/DEF/MID/FWD (this project's full position
-        taxonomy — see seeds/players_49.csv) must all have SOME benchmark
-        categories defined, not just the 3 the acceptance criteria calls
-        out as the minimum (GK, CB->DEF, ST->FWD)."""
         for pos in ["GK", "DEF", "MID", "FWD"]:
             assert RADAR_CATEGORIES_BY_POSITION.get(pos), f"No categories defined for {pos}"
 
@@ -153,9 +130,6 @@ class TestCompareToReference:
 class TestRealSeedFileRespectsDecisionDate:
 
     def test_all_reference_seasons_end_before_decision_date(self):
-        """Functional Requirement #2: reference player stats must be
-        pre-DECISION_DATE. Checks the actual shipped seed file's
-        season_end_date against config.DECISION_DATE."""
         import config
         df = load_reference_players()
         assert not df.empty

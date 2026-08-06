@@ -1,19 +1,3 @@
-# dashboard/pages/08_competition.py
-# Football Atlas — Competition Context page
-#
-# Added 2026-07-30. Two independent, honestly-scoped pieces:
-#   1. Best XI generator (analytics/competition_context.py) — formation-
-#      based lineup from the squad you've already selected/scored. No
-#      opponent data involved (see that module's docstring).
-#   2. Morocco's REAL 2026 World Cup fixture/result record
-#      (analytics/opponent_analyzer.py) — static historical fact, not
-#      tactical analysis.
-#
-# NEITHER piece does "Tactical Fit vs a specific opponent" — that stays
-# unimplemented (see both modules' tactical_*() stubs) because no
-# opponent squad/formation/style data source exists anywhere in this
-# project's Bronze/Silver layers. This page does not pretend otherwise.
-
 import sys
 from pathlib import Path
 
@@ -31,7 +15,7 @@ from analytics.scouting.competition_context import build_best_xi, compare_format
 from analytics.scouting.opponent_analyzer import get_fixtures, tournament_run_summary
 
 st.set_page_config(page_title="Football Atlas — Competition Context", page_icon="🌍", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("🌍 Competition Context")
 
@@ -40,13 +24,10 @@ if top26 is None:
     st.error("No Gold output found. Run `run_gold.py` first.")
     st.stop()
 
-players_full = load_latest_players_scored()  # used as fallback_pool if top26 is short a position
+players_full = load_latest_players_scored()
 
 tab_best_xi, tab_history = st.tabs(["⚽ Best XI by Formation", "🏆 Morocco's Real WC2026 Run"])
 
-# ─────────────────────────────────────────────────────────────────────────
-# TAB 1 — Best XI Generator
-# ─────────────────────────────────────────────────────────────────────────
 with tab_best_xi:
     st.caption(
         "Formation-based lineup from your selected top-26, ranked purely by DSSScore "
@@ -106,9 +87,6 @@ with tab_best_xi:
     fig.update_layout(showlegend=False, height=380, margin=dict(t=20, b=20))
     st.plotly_chart(fig, width="stretch")
 
-# ─────────────────────────────────────────────────────────────────────────
-# TAB 2 — Real World Cup Run
-# ─────────────────────────────────────────────────────────────────────────
 with tab_history:
     post_hoc_banner(
         "Covers everything in this tab: the summary metrics below, the "

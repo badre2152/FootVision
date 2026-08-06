@@ -1,12 +1,3 @@
-# tests/test_player_analysis_page.py
-#
-# Smoke test for dashboard/pages/01_player_analysis.py, added alongside
-# spec #23 (International Reference benchmark section) — this page
-# already had no smoke test at all before this change, and it now has a
-# non-trivial new section (analytics/rival_benchmark.py wiring), so it's
-# worth pinning "the page actually renders" the same way
-# test_final_squad_page.py does for Final Squad.
-
 import os
 import sys
 
@@ -55,17 +46,14 @@ class TestPlayerAnalysisPageSmokeTest:
     def test_page_runs_without_exception(self, gold_snapshot):
         _write_players_scored(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
-        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception, f"Page raised: {[str(e) for e in at.exception]}"
 
     def test_international_reference_section_renders_for_gk(self, gold_snapshot):
-        """Default-selected player (highest DSSScore) is the GK fixture —
-        confirms the #23 benchmark section renders real content (not just
-        the warning) for a position that HAS curated references (GK)."""
         _write_players_scored(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
-        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception
 
@@ -76,7 +64,7 @@ class TestPlayerAnalysisPageSmokeTest:
 
     def test_no_gold_output_shows_error_and_stops_cleanly(self, gold_snapshot):
         at = AppTest.from_file(PAGE_PATH)
-        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception
         assert any("No Gold output found" in e.value for e in at.error)

@@ -1,26 +1,3 @@
-# dashboard/pages/06_tactical_board.py
-# Football Atlas — Tactical Board
-#
-# Redesigned 2026-08-02 (premium HTML/CSS board, see
-# dashboard/pitch_renderer_html.py). XI selection, formation slot
-# assignment, and data loading are UNCHANGED from the original
-# 2026-07-30 version — only how the result is drawn changed, from a
-# static matplotlib image (dashboard/pitch_renderer.py::render_pitch(),
-# still intact and still covered by tests/test_pitch_renderer.py) to a
-# self-contained HTML/CSS component with real hover states and an
-# entrance animation, which a static image cannot do at all.
-#
-# Two sources for the XI:
-#   - "Best XI by DSSScore" — top-N per position from the current top26,
-#     for the formation's slot counts.
-#   - A specific rotation_strategy.py match recommendation (if
-#     gold/rotation_strategy_*.json exists) — see run_rotation_strategy.py.
-#
-# Player photos are optional — see dashboard/pitch_renderer.py's header for
-# the exact convention (dashboard/assets/players/{player_id}.jpg). No
-# photos yet? Every marker falls back to a stylish gradient+initials badge
-# instead of a plain colored circle, the page still works fully.
-
 import sys
 import glob
 import json
@@ -40,9 +17,9 @@ from dashboard.pitch_renderer import FORMATIONS, assign_xi_to_formation, PLAYER_
 from dashboard.pitch_renderer_html import render_pitch_html, render_setup_panel_css
 
 st.set_page_config(page_title="Football Atlas — Tactical Board", page_icon="🧭", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
-st.markdown(render_setup_panel_css(), unsafe_allow_html=True)  # page-scoped skin — see pitch_renderer_html.py docstring
+st.markdown(render_setup_panel_css(), unsafe_allow_html=True)
 st.title("🧭 Tactical Board")
 
 top26 = load_latest_top26()
@@ -101,11 +78,6 @@ with col_left:
         chosen_match = match_options[chosen_label]
         names = chosen_match["recommended_xi"]
         xi_df = top26[top26["player_name"].isin(names)].copy()
-        # preserve the recommended order isn't required for slot assignment
-        # (assign_xi_to_formation groups by position), but formation slot
-        # counts MUST match this match's actual formation — the plan was
-        # built with REAL_FORMATION, so force that here regardless of the
-        # formation picker above, and say so.
         if formation_name != "Real 2026 (1-4-5-1)":
             st.info("Rotation Strategy plans use the real 1-4-5-1 shape — formation picker ignored for this source.")
             formation_name = "Real 2026 (1-4-5-1)"
@@ -123,14 +95,6 @@ with col_right:
     try:
         assigned = assign_xi_to_formation(xi_df, formation_name=formation_name)
 
-        # Display-only enrichment (score breakdown + club + Player DNA for
-        # the click-to-inspect detail panel) — purely cosmetic, joined
-        # AFTER assign_xi_to_formation() has already done the real
-        # slot-assignment work, so the formation logic itself never sees
-        # or needs these extra columns. Each field is read defensively
-        # (xi_df may come from either XI source, and older Gold runs may
-        # lack a given column) — a missing field just means that row of
-        # the detail panel doesn't render, never a crash.
         _EXTRA_FIELDS = [
             "DSSScore", "club", "PerformanceScore", "FormScore",
             "MentalScore", "AvailabilityScore", "PlayerDNA",
@@ -154,11 +118,6 @@ with col_right:
         board_html, board_height_fallback = render_pitch_html(
             assigned, title=match_label, subtitle=formation_name, show_photos=show_photos,
         )
-        # st.components.v1.html is deprecated (Streamlit removed it after
-        # 2026-06-01) — st.iframe is the current replacement and, for raw
-        # HTML strings, auto-sizes height="content" instead of needing a
-        # guessed pixel value. Falls back to components.html only for an
-        # older Streamlit install that predates st.iframe.
         if hasattr(st, "iframe"):
             st.iframe(board_html, height="content", width="stretch")
         else:

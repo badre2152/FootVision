@@ -1,18 +1,3 @@
-# tests/test_clubelo_loader.py
-#
-# Offline unit tests for ingestion/loaders/clubelo_loader.py — NO network
-# calls (api.clubelo.com is not reachable from this sandbox, and shouldn't
-# be a dependency for unit tests anyway). Covers the parsing/matching/
-# scoring logic that CAN be verified without live data, plus the two real
-# bugs found and fixed during the 2026-07-21/22 session:
-#   1. Date-rollover crash (day=0 invalid on the 1st of a month)
-#   2. Coverage-gap reporting (which leagues stayed on the manual estimate)
-#
-# The live API call itself (_fetch_clubelo_csv's actual HTTP request) is
-# NOT tested here — that was verified manually against the real API by
-# the project owner during this session (confirmed working: 597 clubs
-# fetched on 2026-07-22).
-
 import sys
 import os
 from datetime import date, timedelta
@@ -32,14 +17,9 @@ from ingestion.loaders.clubelo_loader import (
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# compute_difficulty_factor
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestComputeDifficultyFactor:
 
     def test_baseline_elo_gives_factor_of_one(self):
-        # 1850 is the documented Big-5 baseline used throughout this module
         assert compute_difficulty_factor(1850) == pytest.approx(1.0, abs=0.01)
 
     def test_lower_elo_gives_lower_factor(self):
@@ -50,10 +30,6 @@ class TestComputeDifficultyFactor:
         for elo in [500, 1000, 1500, 1850, 2200]:
             assert compute_difficulty_factor(elo) > 0
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# _match_club — exact / substring / keyword fallback
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestMatchClub:
 
@@ -77,40 +53,19 @@ class TestMatchClub:
         assert result is None
 
     def test_keyword_fallback_matches_but_is_risky(self):
-        """
-        REGRESSION-DOCUMENTING TEST: confirms the exact scenario logged as
-        a WARNING during the 2026-07-22 live run — "Manchester United"
-        only matches via the risky >3-char keyword fallback ('united'),
-        not exact or substring. This test proves the fallback still works
-        (needed for real coverage) while the source code logs a WARNING
-        for auditability, per the fix made this session.
-        """
         result = _match_club("Manchester United", self.ELO_ROWS)
         assert result is not None
         assert result["Club"] == "Man United"
 
     def test_ambiguous_keyword_could_collide(self):
-        """
-        Documents the KNOWN RISK (not a bug to fix, just to be aware of):
-        two clubs sharing a keyword can collide in the fallback. "Real"
-        matches both "Real Madrid" and "Real Betis" — whichever appears
-        first in elo_rows wins, which may not be the intended club.
-        """
         ambiguous_rows = [
             {"Club": "Real Madrid", "Elo": "2000"},
             {"Club": "Real Betis", "Elo": "1750"},
         ]
-        result = _match_club("Real Sociedad", ambiguous_rows)  # not in the list at all
-        # "Real Sociedad" isn't an exact/substring match for either row, but
-        # "real" (>3 chars) is a shared keyword -> fallback fires and picks
-        # the FIRST row, which is the WRONG club (not Real Sociedad).
+        result = _match_club("Real Sociedad", ambiguous_rows)
         assert result is not None
-        assert result["Club"] == "Real Madrid"  # wrong club, but documents the known risk
+        assert result["Club"] == "Real Madrid"
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# build_league_quality_from_elo
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestBuildLeagueQualityFromElo:
 
@@ -127,72 +82,38 @@ class TestBuildLeagueQualityFromElo:
         assert result["La Liga"] > result["Botola Pro"]
 
     def test_league_with_zero_matched_clubs_is_absent(self):
-        """
-        This is THE key behavior confirmed live on 2026-07-22: Botola Pro
-        (and Saudi/UAE/Egyptian leagues) get ZERO matches against
-        ClubElo's real feed, so they must be ABSENT from the result dict
-        entirely (not present with a wrong/default value) — this is what
-        lets patch_league_quality() correctly leave them on the manual
-        hardcoded estimate instead of overwriting them with junk.
-        """
         seed = pd.DataFrame({
             "club":   ["Some Botola Club"],
             "league": ["Botola Pro"],
         })
-        elo_rows = [{"Club": "Real Madrid", "Elo": "2000"}]  # no Botola club at all
+        elo_rows = [{"Club": "Real Madrid", "Elo": "2000"}]
         result = build_league_quality_from_elo(seed, elo_rows)
         assert "Botola Pro" not in result
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# load_clubelo_bronze — date-rollover bug (fixed 2026-07-21)
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TestDateRolloverFix:
 
     def test_first_of_month_does_not_crash(self):
-        """
-        REGRESSION TEST for the 2026-07-21 fix. The old code was
-        `date.today().replace(day=date.today().day - 1)`, which raises
-        ValueError whenever today is the 1st of any month (day=0 is
-        invalid). This test forces that exact scenario by mocking
-        _fetch_clubelo_csv to fail on the first call (simulating "today's
-        data not published yet") so the fallback-to-yesterday path runs,
-        with "today" being the 1st of a month.
-        """
         call_log = []
 
         def fake_fetch(run_date):
             call_log.append(run_date)
-            return []  # always empty -> forces the yesterday-fallback path
+            return []
 
         with patch("ingestion.loaders.clubelo_loader._fetch_clubelo_csv", side_effect=fake_fetch), \
              patch("ingestion.loaders.clubelo_loader.date") as mock_date:
-            mock_date.today.return_value = date(2026, 8, 1)  # the 1st of a month
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)  # keep real date() constructor usable
+            mock_date.today.return_value = date(2026, 8, 1)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
 
-            # Should not raise ValueError
             result = load_clubelo_bronze(seed_df=None, run_date="2026-08-01")
 
-        assert result == {}  # both attempts returned [], correctly gives up
-        assert len(call_log) == 2  # tried today, then yesterday — no crash in between
+        assert result == {}
+        assert len(call_log) == 2
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# patch_league_quality — coverage-gap reporting (added 2026-07-22)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TestPatchLeagueQualityCoverageGap:
 
     def test_warns_about_leagues_not_covered_by_clubelo(self, caplog):
-        """
-        REGRESSION-DOCUMENTING TEST for the exact real-world scenario found
-        on 2026-07-22: ClubElo updates some leagues but silently leaves
-        Botola Pro/Saudi/UAE/Egyptian leagues on the manual estimate. This
-        test confirms the WARNING now fires automatically (via seed_df)
-        instead of requiring manual before/after DSSScore comparison to
-        notice, as happened this session.
-        """
         seed = pd.DataFrame({
             "club":   ["A", "B", "C", "D"],
             "league": ["Ligue 1", "Botola Pro", "Saudi Pro League", "La Liga"],
@@ -208,12 +129,9 @@ class TestPatchLeagueQualityCoverageGap:
         )
 
     def test_no_warning_when_seed_df_not_provided(self, caplog):
-        """Backward compatible — omitting seed_df must not crash (old call sites)."""
         clubelo_result = {"difficulty_by_league": {"Ligue 1": 0.901}}
         with caplog.at_level("WARNING"):
-            patch_league_quality(clubelo_result)  # no seed_df
-        # Should not crash, and specifically should not raise AttributeError
-        # trying to access seed_df.columns on None.
+            patch_league_quality(clubelo_result)
 
     def test_no_warning_when_all_leagues_covered(self, caplog):
         seed = pd.DataFrame({"club": ["A"], "league": ["Ligue 1"]})

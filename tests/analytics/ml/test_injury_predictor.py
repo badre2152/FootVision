@@ -1,10 +1,3 @@
-# tests/test_injury_predictor.py
-#
-# Test suite for analytics/ml/injury_predictor.py — transparent rule-based
-# injury risk index (NOT a trained model — see module docstring for why).
-# Unit tests against small synthetic DataFrames, no network/MinIO/Gold run
-# required.
-
 import sys
 import os
 from datetime import date
@@ -25,14 +18,14 @@ from analytics.ml.injury_predictor import (
     WEIGHTS,
 )
 
-REF_DATE = date(2026, 6, 1)  # fixed reference date for reproducible age math
+REF_DATE = date(2026, 6, 1)
 
 
 def _base_row(**overrides):
     row = {
         "player_id": "P001",
         "player_name": "Test Player",
-        "wiki_dob": "1998-06-01",       # exactly 28 on REF_DATE
+        "wiki_dob": "1998-06-01",
         "inj_count_2y": 2,
         "inj_days_missed_2y": 60,
         "inj_last_type": "Hamstring injury",
@@ -42,35 +35,24 @@ def _base_row(**overrides):
 
 
 def _df(*rows):
-    # Accept either _df(row1, row2, ...) or _df(gen_expr_yielding_rows) —
-    # a single generator/list argument would otherwise be wrapped as one
-    # dict-shaped "row" instead of iterated.
     if len(rows) == 1 and not isinstance(rows[0], dict):
         rows = tuple(rows[0])
     return pd.DataFrame(list(rows))
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# Weights / cutoffs sanity
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestWeights:
     def test_weights_sum_to_one(self):
         assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Age component
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestAgeComponent:
     def test_young_player_zero_risk(self):
-        comp, low_conf = _age_component("2004-06-01", REF_DATE)  # age 22
+        comp, low_conf = _age_component("2004-06-01", REF_DATE)
         assert comp == 0.0
         assert low_conf is False
 
     def test_old_player_capped_at_one(self):
-        comp, low_conf = _age_component("1988-06-01", REF_DATE)  # age 38
+        comp, low_conf = _age_component("1988-06-01", REF_DATE)
         assert comp == 1.0
         assert low_conf is False
 
@@ -95,10 +77,6 @@ class TestAgeComponent:
         comps = [_age_component(f"{2026 - a}-06-01", REF_DATE)[0] for a in ages]
         assert comps == sorted(comps)
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# Injury type classification
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestInjuryTypeClassification:
     @pytest.mark.parametrize("text", [
@@ -136,11 +114,8 @@ class TestInjuryTypeClassification:
         assert low_conf is True
 
     def test_ambiguous_double_match_flagged_low_confidence(self):
-        # "Hamstring muscle injury" contains both a soft-tissue keyword
-        # ("muscle", "hamstring") and no hard-tissue keyword here — but
-        # test the real ambiguous case from the actual dataset values.
         comp, low_conf = _classify_injury_type("Hamstring muscle injury")
-        assert comp == 1.0  # unambiguously soft-tissue in this specific case
+        assert comp == 1.0
         assert low_conf is False
 
     def test_unrecognized_free_text_neutral_and_flagged(self):
@@ -148,10 +123,6 @@ class TestInjuryTypeClassification:
         assert comp == 0.5
         assert low_conf is True
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# compute_injury_risk() — end to end
-# ─────────────────────────────────────────────────────────────────────────
 
 class TestComputeInjuryRisk:
     def test_missing_required_columns_raises(self):
@@ -229,12 +200,8 @@ class TestComputeInjuryRisk:
         assert r_late.df.iloc[0]["injury_risk_age_component"] > r_early.df.iloc[0]["injury_risk_age_component"]
 
     def test_default_reference_date_is_decision_date_not_today(self):
-        # spec #4 fix: compute_injury_risk() must default to
-        # config.DECISION_DATE, NOT datetime.now()/today — otherwise the
-        # age component (and InjuryRiskScore) would silently drift every
-        # day the script is re-run.
         df = _df(_base_row())
-        result_default = compute_injury_risk(df)  # no reference_date passed
+        result_default = compute_injury_risk(df)
         result_explicit = compute_injury_risk(df, reference_date=config.DECISION_DATE)
         assert not result_default.df["InjuryRiskScore"].isna().any()
         assert (

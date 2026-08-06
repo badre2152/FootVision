@@ -1,20 +1,3 @@
-#!/usr/bin/env python
-# run_player_dna.py — Football DSS ML Layer — Player DNA Clustering
-#
-# Reads the latest gold/players_scored_*.csv (produced by run_gold.py),
-# runs K-Means play-style clustering on outfield players (see
-# analytics/ml/player_clustering.py for the full design rationale and why
-# Selection Classifier / Injury Predictor are NOT included here), and
-# exports:
-#   1. gold/player_dna_YYYYMMDD_HHMMSS.csv   — full table + PlayerDNA column
-#   2. gold/player_dna_summary_YYYYMMDD_HHMMSS.json — archetype counts,
-#      chosen k, silhouette diagnostics, centroid table, feature coverage
-#
-# Run AFTER run_gold.py:
-#   python run_player_dna.py
-#   python run_player_dna.py --k 4          # force k instead of auto-selecting
-#   python run_player_dna.py --input gold/players_scored_20260727_112534.csv
-
 import argparse
 import glob
 import json

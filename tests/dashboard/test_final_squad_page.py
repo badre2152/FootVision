@@ -1,11 +1,3 @@
-# tests/test_final_squad_page.py
-#
-# Smoke test for dashboard/pages/03_final_squad.py via Streamlit's
-# AppTest, per 10_depth_chart.md's Implementation Plan step 4
-# ("Smoke test via AppTest"). Confirms the page runs end-to-end WITHOUT
-# raising, with the new "🔄 Replacement options" expander wired in, using
-# a small synthetic Gold snapshot on disk (no real pipeline run needed).
-
 import sys
 import os
 
@@ -24,12 +16,6 @@ PAGE_PATH = os.path.join(
 
 
 def _write_gold_snapshot(gold_dir, run_date="20260801_000000", include_player_id=True):
-    """
-    Writes a small-but-realistic top26_*.csv + players_scored_*.csv pair
-    into gold_dir — 4 selected players (1 per position) + a handful of
-    non-selected bench candidates, so the replacement-candidate expander
-    has something real to show for at least one position.
-    """
     selected = [
         {"player_id": "P001", "player_name": "Selected GK", "position": "GK",
          "club": "Club A", "league": "Botola Pro", "Rank": 1, "SquadRank": 1,
@@ -77,31 +63,26 @@ class TestFinalSquadPageSmokeTest:
     def test_page_runs_without_exception(self, gold_snapshot):
         _write_gold_snapshot(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
-        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception, f"Page raised: {[str(e) for e in at.exception]}"
 
     def test_replacement_expander_is_rendered_per_selected_player(self, gold_snapshot):
         _write_gold_snapshot(gold_snapshot)
         at = AppTest.from_file(PAGE_PATH)
-        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception
 
         expander_labels = [exp.label for exp in at.expander]
         assert expander_labels, "No expanders rendered at all."
         assert all(label == "🔄 Replacement options" for label in expander_labels)
-        # 4 selected players in the fixture → 4 expanders.
         assert len(expander_labels) == 4
 
     def test_page_degrades_gracefully_when_top26_lacks_player_id(self, gold_snapshot):
-        # Simulates an old, not-yet-regenerated top26_*.csv from before the
-        # SquadRank/player_id export fix (see CHANGELOG.md) — must show the
-        # explanatory st.info(), not crash, and must render zero
-        # "🔄 Replacement options" expanders.
         _write_gold_snapshot(gold_snapshot, include_player_id=False)
         at = AppTest.from_file(PAGE_PATH)
-        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+        at.session_state["_auth_ok"] = True
         at.run()
 
         assert not at.exception
@@ -110,10 +91,8 @@ class TestFinalSquadPageSmokeTest:
         assert "player_id" in info_texts
 
     def test_no_gold_output_shows_error_and_stops_cleanly(self, gold_snapshot):
-        # gold_snapshot dir exists but is empty — matches the pre-existing
-        # "no Gold output found" path this page already had.
         at = AppTest.from_file(PAGE_PATH)
-        at.session_state["_auth_ok"] = True  # spec #6 — bypass auth gate for content tests
+        at.session_state["_auth_ok"] = True
         at.run()
         assert not at.exception
         assert any("No Gold output found" in e.value for e in at.error)

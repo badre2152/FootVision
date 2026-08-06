@@ -1,20 +1,3 @@
-# dashboard/pages/07_sentiment.py
-# Football Atlas — Sentiment Dashboard page
-#
-# Added 2026-07-30. SentimentScore itself was already computed in Gold
-# (analytics/scoring/sentiment_score.py, from real Reddit/YouTube text —
-# see sentiment_text_count below) but never had its own dashboard page;
-# it only showed up folded into the Player Analysis radar chart alongside
-# every other sub-score. This page gives it a dedicated view, since public
-# sentiment is qualitatively different from the performance-stat
-# sub-scores (it's about perception, not measured output) and benefits
-# from its own context rather than being one more radar axis.
-#
-# Per analytics/scoring/sentiment_score.py's own header: the NLP pipeline
-# behind this was flagged as "not tested end-to-end" — treat SentimentScore
-# here as an exploratory public-perception signal, not a validated
-# measurement. This page does not change that caveat, just surfaces it.
-
 import sys
 from pathlib import Path
 
@@ -29,7 +12,7 @@ from dashboard.auth import require_auth
 from dashboard.report_utils import csv_download_button
 
 st.set_page_config(page_title="Football Atlas — Sentiment", page_icon="💬", layout="wide")
-require_auth()  # spec #6 — must run before render_sidebar()/any data load below
+require_auth()
 render_sidebar()
 st.title("💬 Public Sentiment")
 st.caption(
@@ -57,7 +40,6 @@ if players.empty:
 
 has_text_count = "sentiment_text_count" in players.columns
 
-# ── Summary ───────────────────────────────────────────────────────────────
 col1, col2, col3 = st.columns(3)
 col1.metric("Mean SentimentScore", f"{players['SentimentScore'].mean():.3f}")
 col2.metric("Highest", players.loc[players["SentimentScore"].idxmax(), "player_name"])
@@ -74,7 +56,6 @@ if has_text_count:
 
 st.divider()
 
-# ── Ranked bar chart ──────────────────────────────────────────────────────
 left, right = st.columns([3, 2])
 
 with left:
@@ -105,7 +86,6 @@ with right:
 
 st.divider()
 
-# ── Table ─────────────────────────────────────────────────────────────────
 st.subheader("Full breakdown")
 display_cols = ["player_name", "position", "club", "SentimentScore", "DSSScore"]
 if has_text_count:
