@@ -6,7 +6,7 @@ decision-support modules and a password-gated, 12-page Streamlit dashboard
 selection for the 2026 World Cup from a pool of 49 candidate players. The
 dashboard is trilingual (English / Français / العربية).
 
-Pipeline end-to-end لاختيار 26 لاعباً للمنتخب المغربي من قائمة 49 مرشحاً.
+End-to-end pipeline for selecting a 26-player Morocco national team squad from a pool of 49 candidate players.
 
 > **Naming note:** the project was renamed **FootVision**
 > (GitHub: [`badre2152/FootVision`](https://github.com/badre2152/FootVision)).
