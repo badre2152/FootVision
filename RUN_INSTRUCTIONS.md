@@ -1,4 +1,4 @@
-# RUN_INSTRUCTIONS.md — Football Atlas
+# RUN_INSTRUCTIONS.md — FootVision
 **Last updated:** August 3, 2026 — synced with `README.md` and `Makefile`
 (previous version, dated July 21, 2026, predated the `DECISION_DATE`
 enforcement, the ML decision-support modules, dashboard authentication, and
@@ -176,4 +176,4 @@ make stop
 
 ---
 
-*Football Atlas — RUN_INSTRUCTIONS.md · synced with README.md and Makefile · August 3, 2026*
+*FootVision — RUN_INSTRUCTIONS.md · synced with README.md and Makefile · August 3, 2026*

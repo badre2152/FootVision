@@ -1,5 +1,5 @@
 # dashboard/i18n/__init__.py
-# Football Atlas — Dashboard Localization (Arabic / French / English)
+# FootVision — Dashboard Localization (Arabic / French / English)
 #
 # Added for issue #15 (Arabic / French Dashboard Localization).
 #

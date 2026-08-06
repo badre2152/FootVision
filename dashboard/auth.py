@@ -28,7 +28,7 @@ def require_auth() -> None:
     if st.session_state.get(SESSION_KEY_OK):
         return
 
-    st.title("🔒 Football Atlas")
+    st.title("🔒 FootVision")
     st.caption("Coach-staff access only. Enter the shared password to continue.")
     st.text_input(
         "Password",

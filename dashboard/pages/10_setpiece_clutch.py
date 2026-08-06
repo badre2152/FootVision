@@ -12,7 +12,7 @@ from dashboard.auth import require_auth
 from dashboard.report_utils import csv_download_button
 from analytics.performance.set_piece_analyzer import clutch_ranking
 
-st.set_page_config(page_title="Football Atlas — Set Piece & Clutch", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="FootVision — Set Piece & Clutch", page_icon="🎯", layout="wide")
 require_auth()
 render_sidebar()
 st.title("🎯 Set Piece & Clutch")

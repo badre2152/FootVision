@@ -1,5 +1,5 @@
 # dashboard/pages/01_player_analysis.py
-# Football Atlas — Player Analysis page
+# FootVision — Player Analysis page
 
 import sys
 from datetime import datetime
@@ -17,7 +17,7 @@ from dashboard.notes_store import get_note, save_note, NoteConflictError
 from dashboard.report_utils import csv_download_button, build_player_profile_pdf
 from analytics.scouting.rival_benchmark import compare_to_reference
 
-st.set_page_config(page_title="Football Atlas — Player Analysis", page_icon="📊", layout="wide")
+st.set_page_config(page_title="FootVision — Player Analysis", page_icon="📊", layout="wide")
 require_auth()
 render_sidebar()
 st.title("📊 Player Analysis")

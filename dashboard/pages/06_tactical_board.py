@@ -16,7 +16,7 @@ from dashboard.report_utils import csv_download_button
 from dashboard.pitch_renderer import FORMATIONS, assign_xi_to_formation, PLAYER_PHOTOS_DIR
 from dashboard.pitch_renderer_html import render_pitch_html, render_setup_panel_css
 
-st.set_page_config(page_title="Football Atlas — Tactical Board", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="FootVision — Tactical Board", page_icon="🧭", layout="wide")
 require_auth()
 render_sidebar()
 st.markdown(render_setup_panel_css(), unsafe_allow_html=True)

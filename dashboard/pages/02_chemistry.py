@@ -1,5 +1,5 @@
 # dashboard/pages/02_chemistry.py
-# Football Atlas — Chemistry Matrix page
+# FootVision — Chemistry Matrix page
 
 import sys
 from pathlib import Path
@@ -15,7 +15,7 @@ from dashboard.sidebar import render_sidebar
 from dashboard.auth import require_auth
 from dashboard.report_utils import csv_download_button
 
-st.set_page_config(page_title="Football Atlas — Chemistry Matrix", page_icon="🔗", layout="wide")
+st.set_page_config(page_title="FootVision — Chemistry Matrix", page_icon="🔗", layout="wide")
 require_auth()
 render_sidebar()
 st.title("🔗 Chemistry Matrix")

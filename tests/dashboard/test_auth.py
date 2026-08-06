@@ -105,7 +105,7 @@ class TestEveryPageBlocksUnauthenticatedAccess:
         )
 
         titles = [el.value for el in at.title]
-        assert titles == ["🔒 Football Atlas"], (
+        assert titles == ["🔒 FootVision"], (
             f"{script_path.name}: expected only the auth gate's title, got {titles} "
             "— require_auth() did not block before the page's real content."
         )

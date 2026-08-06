@@ -77,7 +77,7 @@ def build_final_squad_pdf(
     disclaimer_style = ParagraphStyle("Disclaimer", parent=styles["Normal"], fontSize=8, textColor=colors.grey)
 
     story = []
-    story.append(Paragraph("Football Atlas — Final Squad Report", title_style))
+    story.append(Paragraph("FootVision — Final Squad Report", title_style))
     scope_note = "Filtered view (sidebar filters applied)" if filters_applied else "Full unfiltered squad"
     meta_bits = [f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}", scope_note]
     if source_file:

@@ -1,5 +1,5 @@
 # dashboard/pages/04_selection_audit.py
-# Football Atlas — Selection Audit page
+# FootVision — Selection Audit page
 
 import sys
 from pathlib import Path
@@ -17,7 +17,7 @@ from dashboard.i18n import t
 from dashboard.report_utils import csv_download_button
 from dashboard.components import post_hoc_banner
 
-st.set_page_config(page_title="Football Atlas — Selection Audit", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="FootVision — Selection Audit", page_icon="🔍", layout="wide")
 require_auth()
 render_sidebar()
 st.title(t("nav.selection_audit_title"))

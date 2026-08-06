@@ -16,7 +16,7 @@ from dashboard.auth import require_auth
 from dashboard.components import pre_cutoff_fix_banner
 from dashboard.report_utils import csv_download_button
 
-st.set_page_config(page_title="Football Atlas — Historical Trend View", page_icon="📈", layout="wide")
+st.set_page_config(page_title="FootVision — Historical Trend View", page_icon="📈", layout="wide")
 require_auth()
 render_sidebar()
 st.title("📈 Historical Trend View")

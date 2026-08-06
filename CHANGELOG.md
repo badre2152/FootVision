@@ -1,4 +1,4 @@
-# CHANGELOG — Football Atlas
+# CHANGELOG — FootVision
 
 This ledger exists specifically to defeat the **"fixes keep disappearing"**
 pattern documented in `03_regression_protection.md`: confirmed, tested fixes

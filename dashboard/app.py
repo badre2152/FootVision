@@ -18,7 +18,7 @@ from dashboard.i18n import t
 from dashboard.report_utils import csv_download_button
 
 st.set_page_config(
-    page_title="Football Atlas — Executive Dashboard",
+    page_title="FootVision — Executive Dashboard",
     page_icon="⚽",
     layout="wide",
 )

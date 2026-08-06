@@ -1,5 +1,5 @@
 # dashboard/pages/03_final_squad.py
-# Football Atlas — Final Squad page
+# FootVision — Final Squad page
 
 import sys
 from datetime import datetime
@@ -22,7 +22,7 @@ from analytics.ml.player_clustering import ARCHETYPE_EMOJI
 from analytics.squad.squad_balance import compute_age_distribution, TIER_ORDER, UNKNOWN_TIER
 from analytics.squad.depth_chart import get_replacement_candidates
 
-st.set_page_config(page_title="Football Atlas — Final Squad", page_icon="🏆", layout="wide")
+st.set_page_config(page_title="FootVision — Final Squad", page_icon="🏆", layout="wide")
 require_auth()
 render_sidebar()
 st.title(t("nav.final_squad_title"))

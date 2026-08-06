@@ -1,4 +1,4 @@
-# Architecture Notes — Football Atlas
+# Architecture Notes — FootVision
 
 This file holds architecture-level decisions that don't fit naturally in
 `README.md`'s user-facing Quick Start / pipeline walkthrough, starting with

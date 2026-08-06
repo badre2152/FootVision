@@ -11,7 +11,7 @@ from dashboard.sidebar import render_sidebar, apply_sidebar_filters
 from dashboard.auth import require_auth
 from dashboard.report_utils import csv_download_button
 
-st.set_page_config(page_title="Football Atlas — Sentiment", page_icon="💬", layout="wide")
+st.set_page_config(page_title="FootVision — Sentiment", page_icon="💬", layout="wide")
 require_auth()
 render_sidebar()
 st.title("💬 Public Sentiment")

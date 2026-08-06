@@ -14,7 +14,7 @@ from dashboard.report_utils import csv_download_button
 from analytics.scouting.competition_context import build_best_xi, compare_formations, FORMATIONS
 from analytics.scouting.opponent_analyzer import get_fixtures, tournament_run_summary
 
-st.set_page_config(page_title="Football Atlas — Competition Context", page_icon="🌍", layout="wide")
+st.set_page_config(page_title="FootVision — Competition Context", page_icon="🌍", layout="wide")
 require_auth()
 render_sidebar()
 st.title("🌍 Competition Context")

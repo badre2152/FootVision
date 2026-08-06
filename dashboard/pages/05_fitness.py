@@ -1,5 +1,5 @@
 # dashboard/pages/05_fitness.py
-# Football Atlas — Fitness & Rotation page
+# FootVision — Fitness & Rotation page
 
 import sys
 from pathlib import Path
@@ -15,7 +15,7 @@ from dashboard.auth import require_auth
 from dashboard.report_utils import csv_download_button
 from analytics.ml.injury_predictor import compute_injury_risk
 
-st.set_page_config(page_title="Football Atlas — Fitness & Rotation", page_icon="🩺", layout="wide")
+st.set_page_config(page_title="FootVision — Fitness & Rotation", page_icon="🩺", layout="wide")
 require_auth()
 render_sidebar()
 st.title("🩺 Fitness & Rotation")

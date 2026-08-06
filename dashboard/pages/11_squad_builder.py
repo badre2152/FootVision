@@ -12,7 +12,7 @@ from dashboard.notes_store import get_all_notes
 from dashboard.report_utils import csv_download_button
 from analytics.scouting.competition_context import build_best_xi, FORMATIONS
 
-st.set_page_config(page_title="Football Atlas — Squad Builder", page_icon="🛠️", layout="wide")
+st.set_page_config(page_title="FootVision — Squad Builder", page_icon="🛠️", layout="wide")
 require_auth()
 render_sidebar()
 st.title("🛠️ Squad Builder")
