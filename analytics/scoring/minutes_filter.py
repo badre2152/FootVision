@@ -1,4 +1,5 @@
 import logging
+import math
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,14 @@ PENALTIES: dict[str, float] = {
 def _get_reliable_minutes(row: pd.Series) -> tuple[float | None, str | None]:
     for col in ("fm_min", "fbref_minutes", "csv_min"):
         val = row.get(col)
-        if val is not None and not pd.isna(val) and float(val) > 0:
-            return float(val), col
+        if val is None or pd.isna(val):
+            continue
+        try:
+            minutes = float(val)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(minutes) and minutes > 0:
+            return minutes, col
     return None, None
 
 
@@ -106,7 +113,7 @@ def apply_dss_gate(df: pd.DataFrame) -> pd.DataFrame:
     if not still_top.empty:
         for _, r in still_top.iterrows():
             logger.warning(
-                "⚠️ minutes_filter GATE ALERT: %s is [%s] but still Rank #%d "
+                "minutes_filter GATE ALERT: %s is [%s] but still Rank #%d "
                 "(DSSScore %.4f → %.4f after gate) — VERIFY MANUALLY before "
                 "including in the final squad recommendation.",
                 r["player_name"], r["minutes_flag"], r["Rank"],
