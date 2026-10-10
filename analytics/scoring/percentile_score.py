@@ -25,16 +25,23 @@ def apply_percentile_scoring(
         logger.warning("percentile_scoring: score_col '%s' not found.", score_col)
         return df
 
-    ranks_asc  = df[score_col].rank(method="average", ascending=True)
-    percentiles = ranks_asc / (n + 1)
+    valid = df[score_col].notna()
+    valid_count = int(valid.sum())
+    if not valid_count:
+        df[out_col] = np.nan
+        return df
+
+    ranks_asc = df.loc[valid, score_col].rank(method="average", ascending=True)
+    percentiles = ranks_asc / (valid_count + 1)
 
     stretched = _exponential_stretch(percentiles, gamma)
 
     orig_max   = df[score_col].max()
-    df[out_col] = (stretched * orig_max).round(4)
+    df[out_col] = np.nan
+    df.loc[valid, out_col] = (stretched * orig_max).round(4)
 
-    orig_rank  = df[score_col].rank(ascending=False, method="min").astype(int)
-    new_rank   = df[out_col].rank(ascending=False, method="min").astype(int)
+    orig_rank = df.loc[valid, score_col].rank(ascending=False, method="min").astype(int)
+    new_rank = df.loc[valid, out_col].rank(ascending=False, method="min").astype(int)
     mismatches = (orig_rank != new_rank).sum()
 
     orig_range = df[score_col].max() - df[score_col].min()
