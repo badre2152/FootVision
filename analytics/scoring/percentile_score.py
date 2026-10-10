@@ -49,7 +49,7 @@ def apply_percentile_scoring(
         )
     else:
         logger.info(
-            "percentile_scoring ✓ | range: %.4f → %.4f (×%.2f) | gamma=%.1f",
+            "percentile_scoring | range: %.4f → %.4f (×%.2f) | gamma=%.1f",
             orig_range, new_range, expansion, gamma,
         )
 
@@ -58,6 +58,14 @@ def apply_percentile_scoring(
 
 def score_summary(df: pd.DataFrame, top_n: int = 26) -> dict:
     top = df.sort_values("Rank").head(top_n)
+    if top.empty:
+        return {
+            "dss_range_original": None,
+            "dss_range_percentile": None,
+            "expansion_factor": None,
+            "elite_fringe_gap_original": None,
+            "elite_fringe_gap_percentile": None,
+        }
 
     def _range(col):
         return round(float(top[col].max() - top[col].min()), 4) if col in top.columns else None
@@ -65,7 +73,7 @@ def score_summary(df: pd.DataFrame, top_n: int = 26) -> dict:
     def _mid_gap(col):
         if col not in top.columns:
             return None
-        half = top.iloc[top_n // 2][col]
+        half = top.iloc[len(top) // 2][col]
         top1 = top.iloc[0][col]
         return round(float(top1 - half), 4)
 
