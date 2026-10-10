@@ -1,0 +1,22 @@
+name: Percentile summary regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  percentile-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install pandas numpy
+      - name: Compile changed modules
+        run: python -m compileall -q analytics/scoring/percentile_score.py tests/analytics/scoring/test_percentile_summary.py
+      - name: Run percentile regression checks
+        run: python -m unittest discover -s tests/analytics/scoring -p test_percentile_summary.py -v
